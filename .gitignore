@@ -1,0 +1,17 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+### IntelliJ IDEA ###
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+### Secrets & Local Uploads ###
+.env
+uploads/
+
+### OS ###
+.DS_Store
+Thumbs.db

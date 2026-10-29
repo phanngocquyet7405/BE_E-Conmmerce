@@ -1,0 +1,166 @@
+package com.ecommerce.service.impl;
+
+import com.ecommerce.common.response.PageResponse;
+import com.ecommerce.document.Brand;
+import com.ecommerce.document.Category;
+import com.ecommerce.document.Product;
+import com.ecommerce.dto.request.ProductRequest;
+import com.ecommerce.dto.request.ProductSearchCriteria;
+import com.ecommerce.dto.response.ProductResponse;
+import com.ecommerce.exception.AppException;
+import com.ecommerce.exception.ErrorCode;
+import com.ecommerce.mapper.ProductMapper;
+import com.ecommerce.repository.BrandRepository;
+import com.ecommerce.repository.CategoryRepository;
+import com.ecommerce.repository.ProductRepository;
+import com.ecommerce.service.ProductService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class ProductServiceImpl implements ProductService {
+
+    private final ProductRepository productRepository;
+    private final CategoryRepository categoryRepository;
+    private final BrandRepository brandRepository;
+    private final ProductMapper productMapper;
+    private final MongoTemplate mongoTemplate;
+
+    @Override
+    public PageResponse<ProductResponse> getActiveProducts(Pageable pageable) {
+        Page<ProductResponse> page = productRepository
+                .findAllByActiveTrue(pageable)
+                .map(productMapper::toResponse);
+        return PageResponse.fromPage(page);
+    }
+
+    @Override
+    public ProductResponse getProductById(String id) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
+        return productMapper.toResponse(product);
+    }
+
+    @Override
+    public ProductResponse createProduct(ProductRequest request) {
+        if (productRepository.existsBySkuIgnoreCase(request.getSku())) {
+            throw new AppException(ErrorCode.PRODUCT_SKU_EXISTS);
+        }
+
+        Category category = categoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new AppException(ErrorCode.CATEGORY_NOT_FOUND));
+
+        Product product = productMapper.toDocument(request);
+        product.setCategoryName(category.getName());
+
+        // Liên kết Thương hiệu (nếu có truyền brandId)
+        if (StringUtils.hasText(request.getBrandId())) {
+            Brand brand = brandRepository.findById(request.getBrandId())
+                    .orElseThrow(() -> new AppException(ErrorCode.BRAND_NOT_FOUND));
+            product.setBrandId(brand.getId());
+            product.setBrandName(brand.getName());
+        }
+
+        return productMapper.toResponse(productRepository.save(product));
+    }
+
+    @Override
+    public ProductResponse updateProduct(String id, ProductRequest request) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        if (!product.getSku().equalsIgnoreCase(request.getSku())
+                && productRepository.existsBySkuIgnoreCase(request.getSku())) {
+            throw new AppException(ErrorCode.PRODUCT_SKU_EXISTS);
+        }
+
+        Category category = categoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new AppException(ErrorCode.CATEGORY_NOT_FOUND));
+
+        productMapper.updateDocumentFromRequest(request, product);
+        product.setCategoryName(category.getName());
+
+        // Cập nhật Thương hiệu
+        if (StringUtils.hasText(request.getBrandId())) {
+            Brand brand = brandRepository.findById(request.getBrandId())
+                    .orElseThrow(() -> new AppException(ErrorCode.BRAND_NOT_FOUND));
+            product.setBrandId(brand.getId());
+            product.setBrandName(brand.getName());
+        } else {
+            product.setBrandId(null);
+            product.setBrandName(null);
+        }
+
+        return productMapper.toResponse(productRepository.save(product));
+    }
+
+    @Override
+    public void deleteProduct(String id) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
+        product.setActive(false);
+        productRepository.save(product);
+    }
+
+    @Override
+    public PageResponse<ProductResponse> searchProducts(ProductSearchCriteria criteria) {
+        Query query = new Query();
+        query.addCriteria(Criteria.where("active").is(true));
+
+        // 1. Tìm kiếm từ khóa theo tên, mô tả, SKU hoặc tên thương hiệu
+        if (StringUtils.hasText(criteria.getKeyword())) {
+            String regex = ".*" + criteria.getKeyword().trim() + ".*";
+            query.addCriteria(new Criteria().orOperator(
+                    Criteria.where("name").regex(regex, "i"),
+                    Criteria.where("description").regex(regex, "i"),
+                    Criteria.where("sku").regex(regex, "i"),
+                    Criteria.where("brand_name").regex(regex, "i")
+            ));
+        }
+
+        // 2. Lọc theo danh mục
+        if (StringUtils.hasText(criteria.getCategoryId())) {
+            query.addCriteria(Criteria.where("category_id").is(criteria.getCategoryId()));
+        }
+
+        // 3. Lọc theo thương hiệu
+        if (StringUtils.hasText(criteria.getBrandId())) {
+            query.addCriteria(Criteria.where("brand_id").is(criteria.getBrandId()));
+        }
+
+        // 4. Lọc theo khoảng giá
+        if (criteria.getMinPrice() != null && criteria.getMaxPrice() != null) {
+            query.addCriteria(Criteria.where("price").gte(criteria.getMinPrice()).lte(criteria.getMaxPrice()));
+        } else if (criteria.getMinPrice() != null) {
+            query.addCriteria(Criteria.where("price").gte(criteria.getMinPrice()));
+        } else if (criteria.getMaxPrice() != null) {
+            query.addCriteria(Criteria.where("price").lte(criteria.getMaxPrice()));
+        }
+
+        long totalElements = mongoTemplate.count(query, Product.class);
+
+        Sort sort = "asc".equalsIgnoreCase(criteria.getSortDir())
+                ? Sort.by(criteria.getSortBy()).ascending()
+                : Sort.by(criteria.getSortBy()).descending();
+        Pageable pageable = PageRequest.of(criteria.getPage(), criteria.getSize(), sort);
+        query.with(pageable);
+
+        List<Product> products = mongoTemplate.find(query, Product.class);
+        List<ProductResponse> responses = products.stream().map(productMapper::toResponse).toList();
+        Page<ProductResponse> page = new PageImpl<>(responses, pageable, totalElements);
+
+        return PageResponse.fromPage(page);
+    }
+}
