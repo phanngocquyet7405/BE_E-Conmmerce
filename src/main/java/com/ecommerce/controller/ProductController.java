@@ -33,8 +33,11 @@ public class ProductController {
             @RequestParam(defaultValue = "createdAt") String sortBy,
             @RequestParam(defaultValue = "desc") String sortDir) {
 
+        int validatedPage = Math.max(page, 0);
+        int validatedSize = Math.min(Math.max(size, 1), 50);
+
         Sort sort = sortDir.equalsIgnoreCase("asc") ? Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
-        Pageable pageable = PageRequest.of(page, size, sort);
+        Pageable pageable = PageRequest.of(validatedPage, validatedSize, sort);
         return ResponseEntity.ok(ApiResponse.ok(productService.getActiveProducts(pageable)));
     }
 
@@ -51,14 +54,17 @@ public class ProductController {
             @RequestParam(defaultValue = "createdAt") String sortBy,
             @RequestParam(defaultValue = "desc") String sortDir) {
 
+        int validatedPage = Math.max(page, 0);
+        int validatedSize = Math.min(Math.max(size, 1), 50);
+
         ProductSearchCriteria criteria = new ProductSearchCriteria();
         criteria.setKeyword(keyword);
         criteria.setCategoryId(categoryId);
         criteria.setBrandId(brandId);
         criteria.setMinPrice(minPrice);
         criteria.setMaxPrice(maxPrice);
-        criteria.setPage(page);
-        criteria.setSize(size);
+        criteria.setPage(validatedPage);
+        criteria.setSize(validatedSize);
         criteria.setSortBy(sortBy);
         criteria.setSortDir(sortDir);
 

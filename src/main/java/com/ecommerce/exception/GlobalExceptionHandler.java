@@ -2,6 +2,8 @@ package com.ecommerce.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -10,6 +12,10 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -88,6 +94,68 @@ public class GlobalExceptionHandler {
                         .build());
     }
 
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(
+            NoResourceFoundException ex, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ErrorResponse.builder()
+                        .code(4004)
+                        .error("NOT_FOUND")
+                        .message("Tài nguyên hoặc đường dẫn yêu cầu không tồn tại: " + request.getRequestURI())
+                        .path(request.getRequestURI())
+                        .build());
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(
+            MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+        String msg = "Giá trị tham số '" + ex.getName() + "' không đúng định dạng yêu cầu";
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ErrorResponse.builder()
+                        .code(ErrorCode.VALIDATION_ERROR.getCode())
+                        .error("TYPE_MISMATCH")
+                        .message(msg)
+                        .path(request.getRequestURI())
+                        .build());
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxSizeException(
+            MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        ErrorCode ec = ErrorCode.FILE_SIZE_EXCEEDED;
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ErrorResponse.builder()
+                        .code(ec.getCode())
+                        .error(ec.name())
+                        .message(ec.getMessage())
+                        .path(request.getRequestURI())
+                        .build());
+    }
+
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateKey(
+            DuplicateKeyException ex, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ErrorResponse.builder()
+                        .code(4009)
+                        .error("DUPLICATE_KEY")
+                        .message("Dữ liệu bị trùng lặp khóa duy nhất (unique key constraint violation)")
+                        .path(request.getRequestURI())
+                        .build());
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ErrorResponse> handleResponseStatusException(
+            ResponseStatusException ex, HttpServletRequest request) {
+        return ResponseEntity.status(ex.getStatusCode())
+                .body(ErrorResponse.builder()
+                        .code(ex.getStatusCode().value())
+                        .error(ex.getStatusCode().toString())
+                        .message(ex.getReason())
+                        .path(request.getRequestURI())
+                        .build());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUncaughtException(
             Exception ex, HttpServletRequest request) {
@@ -97,7 +165,7 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.builder()
                         .code(ec.getCode())
                         .error(ec.name())
-                        .message(ec.getMessage())
+                        .message(ex.getMessage())
                         .path(request.getRequestURI())
                         .build());
     }

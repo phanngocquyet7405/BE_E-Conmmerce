@@ -1,7 +1,7 @@
 spring:
   data:
     mongodb:
-      uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db}
+      uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db?maxPoolSize=15&minPoolSize=2&serverSelectionTimeoutMS=5000}
       auto-index-creation: true
 
     redis:
@@ -11,12 +11,17 @@ spring:
       password: ${REDIS_PASSWORD:}
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
-      timeout: 5000ms
+      timeout: 500ms
       lettuce:
         pool:
           max-active: 8
           max-idle: 8
           min-idle: 2
+
+app:
+  jwt:
+    access-secret: ${JWT_ACCESS_SECRET:bXktc3VwZXItc2VjcmV0LWaccessLtleS1mb3ItZWNvbW1lcmNlLTIwMjYtYmFja2VuZA==}
+    refresh-secret: ${JWT_REFRESH_SECRET:bXktc3VwZXItc2VjcmV0LXJlZnJlc2gta2V5LWZvci1lY29tbWVyY2UtMjAyNi1iYWNrZW5k}
 
 logging:
   level:

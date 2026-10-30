@@ -9,7 +9,7 @@ spring:
       max-request-size: 50MB
   data:
     mongodb:
-      uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db}
+      uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db?maxPoolSize=15&minPoolSize=2&serverSelectionTimeoutMS=5000}
       auto-index-creation: ${MONGODB_AUTO_INDEX_CREATION:true}
     redis:
       url: ${REDIS_URL:}
@@ -18,18 +18,29 @@ spring:
       password: ${REDIS_PASSWORD:}
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
-      timeout: 5000ms
+      timeout: 500ms
 
 server:
   port: ${PORT:${SERVER_PORT:8080}}
+  forward-headers-strategy: native
   servlet:
     context-path: /
+  tomcat:
+    threads:
+      max: 30
+      min-spare: 5
+    max-connections: 100
+    accept-count: 20
+  compression:
+    enabled: true
+    mime-types: application/json,text/plain,text/xml,text/css,application/javascript
+    min-response-size: 1024
 
 app:
   jwt:
     issuer: ecommerce-single-store
-    access-secret: ${JWT_ACCESS_SECRET:bXktc3VwZXItc2VjcmV0LWaccessLtleS1mb3ItZWNvbW1lcmNlLTIwMjYtYmFja2VuZA==}
-    refresh-secret: ${JWT_REFRESH_SECRET:bXktc3VwZXItc2VjcmV0LXJlZnJlc2gta2V5LWZvci1lY29tbWVyY2UtMjAyNi1iYWNrZW5k}
+    access-secret: ${JWT_ACCESS_SECRET:}
+    refresh-secret: ${JWT_REFRESH_SECRET:}
     access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:3600000}       # 1 Giờ
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}   # 7 Ngày
   cors:
@@ -37,8 +48,3 @@ app:
   upload:
     dir: ${UPLOAD_DIR:uploads}
     base-url: ${UPLOAD_BASE_URL:http://localhost:8080/uploads}
-
-cloudinary:
-  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
-  api-key: ${CLOUDINARY_API_KEY:}
-  api-secret: ${CLOUDINARY_API_SECRET:}

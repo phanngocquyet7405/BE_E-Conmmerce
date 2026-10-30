@@ -12,6 +12,7 @@ import com.ecommerce.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -21,6 +22,7 @@ import java.util.Set;
 
 @Slf4j
 @Component
+@Profile("dev")
 @RequiredArgsConstructor
 public class DataInitializer implements CommandLineRunner {
 
@@ -36,7 +38,7 @@ public class DataInitializer implements CommandLineRunner {
             initUsers();
             initCategoriesAndBrands();
         } catch (Exception e) {
-            log.info("Lưu ý: Chưa thể kết nối tới CSDL MongoDB để khởi tạo dữ liệu mẫu. Dữ liệu sẽ tự động tạo khi kết nối CSDL thành công. Chi tiết: {}", e.getMessage());
+            log.warn("Lưu ý: Chưa thể kết nối tới CSDL MongoDB để khởi tạo dữ liệu mẫu (dev). Dữ liệu sẽ tự động tạo khi kết nối CSDL thành công. Chi tiết: {}", e.getMessage());
         }
     }
 
@@ -51,7 +53,7 @@ public class DataInitializer implements CommandLineRunner {
                     .active(true)
                     .build();
             userRepository.save(admin);
-            log.info("=> Khởi tạo tài khoản Quản trị viên mặc định: admin@ecommerce.com / admin123");
+            log.info("=> [DEV] Khởi tạo tài khoản Quản trị viên mẫu: admin@ecommerce.com");
         }
 
         if (!userRepository.existsByEmail("customer@ecommerce.com")) {
@@ -64,7 +66,7 @@ public class DataInitializer implements CommandLineRunner {
                     .active(true)
                     .build();
             userRepository.save(customer);
-            log.info("=> Khởi tạo tài khoản Khách hàng mặc định: customer@ecommerce.com / customer123");
+            log.info("=> [DEV] Khởi tạo tài khoản Khách hàng mẫu: customer@ecommerce.com");
         }
     }
 
@@ -142,7 +144,7 @@ public class DataInitializer implements CommandLineRunner {
                         .build());
             }
 
-            log.info("=> Khởi tạo thành công Danh mục, Thương hiệu và Sản phẩm mẫu ban đầu.");
+            log.info("=> [DEV] Khởi tạo thành công Danh mục, Thương hiệu và Sản phẩm mẫu ban đầu.");
         }
     }
 }

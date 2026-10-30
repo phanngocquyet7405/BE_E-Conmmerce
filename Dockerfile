@@ -20,9 +20,9 @@ RUN mkdir -p /app/uploads/images
 # Copy compiled JAR
 COPY --from=builder /build/target/ecommerce-backend-*.jar /app/app.jar
 
-# Render dynamic port configuration and memory limits for 512MB RAM environment
+# Render dynamic port configuration and optimized JVM flags for 512MB RAM environment
 ENV PORT=8080 \
-    JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+    JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=60.0 -XX:MaxMetaspaceSize=110m -Xss512k -XX:+UseSerialGC -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -Djava.security.egd=file:/dev/./urandom"
 
 EXPOSE 8080
 
