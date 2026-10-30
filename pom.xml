@@ -90,6 +90,13 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- Cloudinary Media Storage -->
+        <dependency>
+            <groupId>com.cloudinary</groupId>
+            <artifactId>cloudinary-http44</artifactId>
+            <version>1.38.0</version>
+        </dependency>
+
         <!-- 7. Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

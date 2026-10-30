@@ -52,12 +52,14 @@ public class Product {
     @Builder.Default
     private Boolean active = true;
 
+    @Indexed
     @Field("category_id")
     private String categoryId;
 
     @Field("category_name")
     private String categoryName;
 
+    @Indexed
     @Field("brand_id")
     private String brandId;
 

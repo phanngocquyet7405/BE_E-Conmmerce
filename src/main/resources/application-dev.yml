@@ -1,15 +1,16 @@
 spring:
   data:
     mongodb:
-      uri: "mongodb://furiousfast189_db_android:Nhom2_QMPS_Android@ac-gz3otwr-shard-00-00.y17f1ny.mongodb.net:27017,ac-gz3otwr-shard-00-01.y17f1ny.mongodb.net:27017,ac-gz3otwr-shard-00-02.y17f1ny.mongodb.net:27017/test_android?ssl=true&replicaSet=atlas-6xogew-shard-0&authSource=admin&retryWrites=true&w=majority"
+      uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db}
       auto-index-creation: true
 
     redis:
-      host: huge-duckling-228694.upstash.io
-      port: 6379
-      password: gQAAAAAAA31WAAIgcDFkMWQ0ZGE5ZWI4MmQ0ODdmODE4ZTg2OTNhYWI4Y2MyYw
+      url: ${REDIS_URL:}
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       ssl:
-        enabled: true
+        enabled: ${REDIS_SSL_ENABLED:false}
       timeout: 5000ms
       lettuce:
         pool:

@@ -7,9 +7,21 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 50MB
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db}
+      auto-index-creation: ${MONGODB_AUTO_INDEX_CREATION:true}
+    redis:
+      url: ${REDIS_URL:}
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+      timeout: 5000ms
 
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${PORT:${SERVER_PORT:8080}}
   servlet:
     context-path: /
 
@@ -25,3 +37,8 @@ app:
   upload:
     dir: ${UPLOAD_DIR:uploads}
     base-url: ${UPLOAD_BASE_URL:http://localhost:8080/uploads}
+
+cloudinary:
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+  api-key: ${CLOUDINARY_API_KEY:}
+  api-secret: ${CLOUDINARY_API_SECRET:}

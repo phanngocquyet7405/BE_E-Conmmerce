@@ -1,10 +1,13 @@
 package com.ecommerce.service.impl;
 
+import com.cloudinary.Cloudinary;
+import com.cloudinary.utils.ObjectUtils;
 import com.ecommerce.dto.response.MediaUploadResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.service.MediaService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -15,10 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -27,6 +27,9 @@ public class MediaServiceImpl implements MediaService {
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp", "image/gif", "image/jpg"
     );
+
+    @Autowired(required = false)
+    private Cloudinary cloudinary;
 
     @Value("${app.upload.dir:uploads}")
     private String uploadDir;
@@ -45,13 +48,42 @@ public class MediaServiceImpl implements MediaService {
             throw new AppException(ErrorCode.INVALID_FILE_TYPE);
         }
 
+        String originalFilename = StringUtils.cleanPath(
+                file.getOriginalFilename() != null ? file.getOriginalFilename() : "image.jpg");
+
+        // 1. Ưu tiên tải thẳng lên Cloudinary nếu đã cấu hình tài khoản
+        if (cloudinary != null) {
+            try {
+                Map<?, ?> uploadResult = cloudinary.uploader().upload(file.getBytes(), ObjectUtils.asMap(
+                        "folder", "ecommerce_products",
+                        "resource_type", "image"
+                ));
+
+                String secureUrl = (String) uploadResult.get("secure_url");
+                String publicId = (String) uploadResult.get("public_id");
+
+                log.info("Đã tải ảnh thành công lên Cloudinary: {}", secureUrl);
+
+                return MediaUploadResponse.builder()
+                        .fileName(publicId)
+                        .originalName(originalFilename)
+                        .fileUrl(secureUrl)
+                        .contentType(contentType)
+                        .size(file.getSize())
+                        .build();
+
+            } catch (Exception e) {
+                log.error("Lỗi khi tải ảnh lên Cloudinary, chuyển sang lưu cục bộ: ", e);
+            }
+        }
+
+        // 2. Fallback lưu cục bộ nếu chưa cấu hình Cloudinary
         try {
             Path targetFolder = Paths.get(uploadDir, "images").toAbsolutePath().normalize();
             if (!Files.exists(targetFolder)) {
                 Files.createDirectories(targetFolder);
             }
 
-            String originalFilename = StringUtils.cleanPath(file.getOriginalFilename() != null ? file.getOriginalFilename() : "image.jpg");
             String extension = "";
             int extIndex = originalFilename.lastIndexOf(".");
             if (extIndex > 0) {
@@ -73,7 +105,7 @@ public class MediaServiceImpl implements MediaService {
                     .build();
 
         } catch (IOException e) {
-            log.error("Lỗi khi lưu trữ file tải lên: ", e);
+            log.error("Lỗi khi lưu trữ file cục bộ: ", e);
             throw new AppException(ErrorCode.FILE_UPLOAD_FAILED);
         }
     }
