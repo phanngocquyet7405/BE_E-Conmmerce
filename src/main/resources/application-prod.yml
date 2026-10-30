@@ -2,7 +2,7 @@ spring:
   data:
     mongodb:
       uri: ${MONGODB_URI}
-      auto-index-creation: ${MONGODB_AUTO_INDEX_CREATION:true}
+      auto-index-creation: false
 
     redis:
       url: ${REDIS_URL:}
@@ -11,7 +11,7 @@ spring:
       password: ${REDIS_PASSWORD:}
       ssl:
         enabled: ${REDIS_SSL_ENABLED:true}
-      timeout: 5000ms
+      timeout: 500ms
 
 logging:
   level:

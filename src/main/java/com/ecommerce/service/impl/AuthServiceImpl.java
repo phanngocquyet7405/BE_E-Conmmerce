@@ -17,6 +17,8 @@ import com.ecommerce.util.JwtUtil;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -60,12 +62,26 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public TokenResponse login(LoginRequest request) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
-        );
+        // Kiểm tra trực tiếp trạng thái tài khoản trong MongoDB trước khi xác thực
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new AppException(ErrorCode.BAD_CREDENTIALS));
 
-        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
-        return buildAndSaveTokens(userDetails);
+        if (!user.isActive()) {
+            throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản của bạn đã bị khóa hoặc ngừng hoạt động");
+        }
+
+        try {
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+            );
+
+            CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+            return buildAndSaveTokens(userDetails);
+        } catch (DisabledException ex) {
+            throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản của bạn đã bị khóa hoặc ngừng hoạt động");
+        } catch (BadCredentialsException ex) {
+            throw new AppException(ErrorCode.BAD_CREDENTIALS);
+        }
     }
 
     @Override
@@ -80,6 +96,11 @@ public class AuthServiceImpl implements AuthService {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED));
+
+        // Kiểm tra trạng thái tài khoản trong MongoDB
+        if (!user.isActive()) {
+            throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản của bạn đã bị khóa hoặc ngừng hoạt động");
+        }
 
         // Thu hồi refresh token cũ (Token Rotation)
         redisTokenService.deleteRefreshToken(userId, tokenId);

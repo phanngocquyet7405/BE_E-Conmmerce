@@ -4,6 +4,8 @@ import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
@@ -14,6 +16,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Document(collection = "products")
+@CompoundIndexes({
+    @CompoundIndex(name = "active_createdAt_idx", def = "{'active': 1, 'created_at': -1}")
+})
 @Getter
 @Setter
 @NoArgsConstructor

@@ -28,6 +28,14 @@ public class CustomUserDetails implements UserDetails {
                 .collect(Collectors.toSet());
     }
 
+    public CustomUserDetails(String id, String email, Collection<? extends GrantedAuthority> authorities) {
+        this.id = id;
+        this.username = email;
+        this.password = "";
+        this.active = true;
+        this.authorities = authorities;
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return authorities;
