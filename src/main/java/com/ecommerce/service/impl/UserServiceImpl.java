@@ -26,20 +26,27 @@ public class UserServiceImpl implements UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED, "Không tìm thấy người dùng"));
 
-        user.setActive(active);
-        User savedUser = userRepository.save(user);
-
         if (!active) {
-            // active = false: blockUser (ghi epoch timestamp lúc gọi) + xóa refresh token
+            // Khi khóa tài khoản: Ghi Redis TRƯỚC để thu hồi các phiên hiện tại.
+            // Nếu Redis lỗi -> ném AppException ngay, MongoDB chưa bị sửa đổi (tránh trạng thái nửa vời).
             redisTokenService.blockUser(userId);
             log.info("Admin đã khóa tài khoản người dùng {} (ghi blocked:user, thu hồi refresh token)", userId);
         } else {
-            // active = true: unblockUser (xóa key blocked:user để user đăng nhập lại được ngay)
+            // Khi mở khóa: Xóa key blocked:user trên Redis
             redisTokenService.unblockUser(userId);
             log.info("Admin đã mở khóa tài khoản người dùng {} (xóa key blocked:user)", userId);
         }
 
-        return savedUser;
+        user.setActive(active);
+        try {
+            return userRepository.save(user);
+        } catch (Exception e) {
+            // Hoàn tác Redis nếu lưu DB thất bại
+            if (!active) {
+                redisTokenService.unblockUser(userId);
+            }
+            throw e;
+        }
     }
 
     @Override
@@ -47,14 +54,18 @@ public class UserServiceImpl implements UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED, "Không tìm thấy người dùng"));
 
-        user.setRoles(roles);
-        User savedUser = userRepository.save(user);
-
-        // Khi đổi quyền: blockUser + xóa refresh token của user đó.
-        // Các token được cấp SAU thời điểm này sẽ có issuedAt >= epochSeconds và dùng được ngay lập tức.
+        // Khi đổi quyền: Ghi Redis TRƯỚC để thu hồi các token cũ của user.
+        // Nếu Redis lỗi -> ném AppException ngay, MongoDB chưa bị sửa đổi vai trò (tránh trạng thái nửa vời).
         redisTokenService.blockUser(userId);
         log.info("Admin đã đổi vai trò người dùng {} thành {} (thu hồi các token cũ)", userId, roles);
 
-        return savedUser;
+        user.setRoles(roles);
+        try {
+            return userRepository.save(user);
+        } catch (Exception e) {
+            // Hoàn tác Redis nếu lưu DB thất bại
+            redisTokenService.unblockUser(userId);
+            throw e;
+        }
     }
 }
