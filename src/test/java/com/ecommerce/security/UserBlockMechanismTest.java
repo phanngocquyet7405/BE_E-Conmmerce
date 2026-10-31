@@ -2,11 +2,13 @@ package com.ecommerce.security;
 
 import com.ecommerce.common.constant.RoleEnum;
 import com.ecommerce.config.AppProperties;
+import com.ecommerce.controller.AdminUserController;
 import com.ecommerce.document.User;
 import com.ecommerce.dto.request.LoginRequest;
 import com.ecommerce.dto.response.TokenResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
+import com.ecommerce.exception.GlobalExceptionHandler;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.service.impl.AuthServiceImpl;
 import com.ecommerce.service.impl.RedisTokenServiceImpl;
@@ -20,11 +22,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 import java.util.Optional;
@@ -33,6 +38,9 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ExtendWith(MockitoExtension.class)
 class UserBlockMechanismTest {
@@ -156,5 +164,92 @@ class UserBlockMechanismTest {
         assertNotNull(tokenResponse);
         assertEquals("new_access_token", tokenResponse.getAccessToken());
         assertEquals("new_refresh_token", tokenResponse.getRefreshToken());
+    }
+
+    @Test
+    @DisplayName("(d) Redis lỗi khi blockUser: phải ném AppException với mã 5xx và message rõ ràng")
+    void blockUser_WhenRedisFails_ThrowsAppException500() {
+        String userId = "user-123";
+        when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("Redis connection refused"));
+
+        AppException exception = assertThrows(AppException.class, () -> redisTokenService.blockUser(userId));
+
+        assertEquals(ErrorCode.INTERNAL_SERVER_ERROR, exception.getErrorCode());
+        assertEquals("Không thể áp dụng khóa/đổi quyền ngay, vui lòng thử lại", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("(e) Khóa user khi Redis lỗi: ném lỗi, không cập nhật DB (không rơi vào trạng thái nửa vời)")
+    void updateUserStatus_WhenRedisFails_ThrowsErrorAndDoesNotModifyDB() {
+        String userId = "user-123";
+        User existingUser = User.builder()
+                .id(userId)
+                .email("test@ecommerce.com")
+                .active(true)
+                .roles(Set.of(RoleEnum.ROLE_CUSTOMER))
+                .build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser));
+        when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("Redis timeout"));
+
+        AppException exception = assertThrows(AppException.class, () -> userService.updateUserStatus(userId, false));
+
+        assertEquals(ErrorCode.INTERNAL_SERVER_ERROR, exception.getErrorCode());
+        assertEquals("Không thể áp dụng khóa/đổi quyền ngay, vui lòng thử lại", exception.getMessage());
+        // Xác nhận DB KHÔNG bị save trạng thái active=false
+        verify(userRepository, never()).save(any(User.class));
+        assertTrue(existingUser.isActive(), "Trạng thái người dùng trong bộ nhớ/DB không bị đổi sang false");
+    }
+
+    @Test
+    @DisplayName("(f) Đổi quyền khi Redis lỗi: ném lỗi, không cập nhật DB")
+    void updateUserRoles_WhenRedisFails_ThrowsErrorAndDoesNotModifyDB() {
+        String userId = "user-123";
+        User existingUser = User.builder()
+                .id(userId)
+                .email("test@ecommerce.com")
+                .active(true)
+                .roles(Set.of(RoleEnum.ROLE_CUSTOMER))
+                .build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser));
+        when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("Redis timeout"));
+
+        AppException exception = assertThrows(AppException.class, () ->
+                userService.updateUserRoles(userId, Set.of(RoleEnum.ROLE_ADMIN)));
+
+        assertEquals(ErrorCode.INTERNAL_SERVER_ERROR, exception.getErrorCode());
+        verify(userRepository, never()).save(any(User.class));
+        assertEquals(Set.of(RoleEnum.ROLE_CUSTOMER), existingUser.getRoles(), "Vai trò người dùng không bị thay đổi");
+    }
+
+    @Test
+    @DisplayName("(g) API Admin: Redis lỗi khi khóa user thì API trả lỗi 500, không trả 200")
+    void adminApi_WhenLockUserAndRedisFails_Returns500Not200() throws Exception {
+        String userId = "user-123";
+        User existingUser = User.builder()
+                .id(userId)
+                .email("test@ecommerce.com")
+                .active(true)
+                .roles(Set.of(RoleEnum.ROLE_CUSTOMER))
+                .build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser));
+        when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("Redis connection down"));
+
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new AdminUserController(userService))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+        mockMvc.perform(patch("/api/v1/admin/users/" + userId + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(status().is(500))
+                .andExpect(jsonPath("$.code").value(9999))
+                .andExpect(jsonPath("$.error").value("INTERNAL_SERVER_ERROR"))
+                .andExpect(jsonPath("$.message").value("Không thể áp dụng khóa/đổi quyền ngay, vui lòng thử lại"));
+
+        verify(userRepository, never()).save(any(User.class));
     }
 }

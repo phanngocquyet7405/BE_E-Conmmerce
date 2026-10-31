@@ -1,6 +1,8 @@
 package com.ecommerce.service.impl;
 
 import com.ecommerce.config.AppProperties;
+import com.ecommerce.exception.AppException;
+import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.service.RedisTokenService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -107,6 +109,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
                     userId, epochSeconds, ttlMillis);
         } catch (Exception e) {
             log.error("Không thể ghi key blocked user vào Redis: {}", e.getMessage());
+            throw new AppException(ErrorCode.INTERNAL_SERVER_ERROR, "Không thể áp dụng khóa/đổi quyền ngay, vui lòng thử lại");
         }
     }
 
