@@ -15,6 +15,8 @@ public class UserProfileResponse {
     private final String fullName;
     private final String phone;
     private final String avatarUrl;
+    private final boolean emailVerified;
+    private final boolean phoneVerified;
     private final Set<String> roles;
     private final List<Address> addresses;
 }

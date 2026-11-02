@@ -4,6 +4,7 @@ import com.ecommerce.document.Address;
 import com.ecommerce.document.OrderItem;
 import com.ecommerce.document.OrderStatus;
 import com.ecommerce.document.PaymentMethod;
+import com.ecommerce.document.PaymentStatus;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -26,7 +27,16 @@ public class OrderResponse {
     private final BigDecimal shippingFee;
     private final BigDecimal finalAmount;
     private final PaymentMethod paymentMethod;
+    private final PaymentStatus paymentStatus;
+    private final Instant paidAt;
     private final OrderStatus status;
     private final String note;
     private final Instant createdAt;
+
+    // Chi tiết thanh toán VietQR / SePay (nếu chọn SEPAY hoặc BANKING)
+    private final String qrImageUrl;
+    private final String bankName;
+    private final String accountNumber;
+    private final String accountHolder;
+    private final String transferContent;
 }

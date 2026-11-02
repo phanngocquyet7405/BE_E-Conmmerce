@@ -9,8 +9,6 @@ import com.ecommerce.mapper.BrandMapper;
 import com.ecommerce.repository.BrandRepository;
 import com.ecommerce.service.BrandService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -23,7 +21,6 @@ public class BrandServiceImpl implements BrandService {
     private final BrandMapper brandMapper;
 
     @Override
-    @Cacheable(value = "brands", key = "'all'")
     public List<BrandResponse> getAllBrands() {
         return brandRepository.findAll().stream()
                 .map(brandMapper::toResponse)
@@ -31,7 +28,6 @@ public class BrandServiceImpl implements BrandService {
     }
 
     @Override
-    @Cacheable(value = "brands", key = "#id")
     public BrandResponse getBrandById(String id) {
         Brand brand = brandRepository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.BRAND_NOT_FOUND));
@@ -39,7 +35,6 @@ public class BrandServiceImpl implements BrandService {
     }
 
     @Override
-    @CacheEvict(value = "brands", allEntries = true)
     public BrandResponse createBrand(BrandRequest request) {
         if (brandRepository.existsByName(request.getName())) {
             throw new AppException(ErrorCode.VALIDATION_ERROR, "Tên thương hiệu đã tồn tại");
@@ -50,7 +45,6 @@ public class BrandServiceImpl implements BrandService {
     }
 
     @Override
-    @CacheEvict(value = "brands", allEntries = true)
     public BrandResponse updateBrand(String id, BrandRequest request) {
         Brand brand = brandRepository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.BRAND_NOT_FOUND));
@@ -60,7 +54,6 @@ public class BrandServiceImpl implements BrandService {
     }
 
     @Override
-    @CacheEvict(value = "brands", allEntries = true)
     public void deleteBrand(String id) {
         Brand brand = brandRepository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.BRAND_NOT_FOUND));

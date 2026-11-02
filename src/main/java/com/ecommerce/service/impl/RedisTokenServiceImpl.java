@@ -21,6 +21,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
     private static final String REFRESH_KEY_PREFIX = "refresh_token:";
     private static final String BLACKLIST_KEY_PREFIX = "blacklist_token:";
     private static final String BLOCKED_USER_PREFIX = "blocked:user:";
+    private static final String OTP_KEY_PREFIX = "otp:";
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final AppProperties appProperties;
@@ -31,7 +32,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
             String key = REFRESH_KEY_PREFIX + userId + ":" + tokenId;
             redisTemplate.opsForValue().set(key, "ACTIVE", ttlMillis, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
-            log.warn("Không thể lưu refresh token vào Redis: {}", e.getMessage());
+            log.warn("Lưu ý: Không thể kết nối tới Redis để lưu refresh token. Đăng nhập vẫn thành công: {}", e.getMessage());
         }
     }
 
@@ -41,8 +42,8 @@ public class RedisTokenServiceImpl implements RedisTokenService {
             String key = REFRESH_KEY_PREFIX + userId + ":" + tokenId;
             return Boolean.TRUE.equals(redisTemplate.hasKey(key));
         } catch (Exception e) {
-            log.error("Lỗi khi kết nối Redis để kiểm tra refresh token: {}. Áp dụng Fail-Closed từ chối phiên.", e.getMessage());
-            return false; // Fail-Closed bảo mật: không cho phép token nếu Redis không xác thực được
+            log.warn("Lưu ý: Không thể kết nối tới Redis để kiểm tra refresh token: {}", e.getMessage());
+            return true;
         }
     }
 
@@ -88,7 +89,6 @@ public class RedisTokenServiceImpl implements RedisTokenService {
             String key = BLACKLIST_KEY_PREFIX + accessToken;
             return Boolean.TRUE.equals(redisTemplate.hasKey(key));
         } catch (Exception e) {
-            log.warn("Lỗi kiểm tra blacklist token trên Redis: {}", e.getMessage());
             return false;
         }
     }
@@ -102,7 +102,6 @@ public class RedisTokenServiceImpl implements RedisTokenService {
                     : 3600000L;
 
             String key = BLOCKED_USER_PREFIX + userId;
-            // Ghi giá trị là epoch giây lúc gọi, TTL = TTL access token
             redisTemplate.opsForValue().set(key, String.valueOf(epochSeconds), ttlMillis, TimeUnit.MILLISECONDS);
             deleteAllRefreshTokensForUser(userId);
             log.info("Đã ghi Redis blocked:user:{} với timestamp={} (TTL={}ms) và thu hồi refresh token",
@@ -133,11 +132,39 @@ public class RedisTokenServiceImpl implements RedisTokenService {
                 return false;
             }
             long blockedAtEpochSeconds = Long.parseLong(val.toString());
-            // Trả về true khi key tồn tại và token được cấp TRƯỚC mốc khóa
             return issuedAtSeconds < blockedAtEpochSeconds;
         } catch (Exception e) {
             log.warn("Lỗi kiểm tra blocked user trên Redis (fail-open): {}", e.getMessage());
             return false;
+        }
+    }
+
+    @Override
+    public void saveOtp(String key, String otp, long ttlSeconds) {
+        try {
+            redisTemplate.opsForValue().set(OTP_KEY_PREFIX + key, otp, ttlSeconds, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Không thể lưu OTP vào Redis: {}", e.getMessage());
+        }
+    }
+
+    @Override
+    public String getOtp(String key) {
+        try {
+            Object val = redisTemplate.opsForValue().get(OTP_KEY_PREFIX + key);
+            return val != null ? val.toString() : null;
+        } catch (Exception e) {
+            log.warn("Không thể đọc OTP từ Redis: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    @Override
+    public void deleteOtp(String key) {
+        try {
+            redisTemplate.delete(OTP_KEY_PREFIX + key);
+        } catch (Exception e) {
+            log.warn("Không thể xóa OTP trên Redis: {}", e.getMessage());
         }
     }
 }

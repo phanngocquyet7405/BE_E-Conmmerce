@@ -1,9 +1,14 @@
 target/
+!.mvn/wrapper/maven-wrapper.jar
 .git/
 .gitignore
-.env
-.env.*
 .idea/
+*.iml
+*.iws
+*.ipr
+out/
+.env
 uploads/
 *.md
-.system_generated/
+.DS_Store
+Thumbs.db

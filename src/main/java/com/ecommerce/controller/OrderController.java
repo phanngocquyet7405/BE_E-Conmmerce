@@ -40,9 +40,7 @@ public class OrderController {
             @AuthenticationPrincipal CustomUserDetails userDetails,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
-        int validatedPage = Math.max(page, 0);
-        int validatedSize = Math.min(Math.max(size, 1), 50);
-        Pageable pageable = PageRequest.of(validatedPage, validatedSize);
+        Pageable pageable = PageRequest.of(page, size);
         return ResponseEntity.ok(ApiResponse.ok(orderService.getCustomerOrders(userDetails.getId(), pageable)));
     }
 
@@ -69,9 +67,7 @@ public class OrderController {
             @RequestParam(required = false) OrderStatus status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "15") int size) {
-        int validatedPage = Math.max(page, 0);
-        int validatedSize = Math.min(Math.max(size, 1), 50);
-        Pageable pageable = PageRequest.of(validatedPage, validatedSize);
+        Pageable pageable = PageRequest.of(page, size);
         return ResponseEntity.ok(ApiResponse.ok(orderService.getAllOrdersForAdmin(status, pageable)));
     }
 

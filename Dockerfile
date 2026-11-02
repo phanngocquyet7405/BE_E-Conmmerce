@@ -1,29 +1,33 @@
-# Stage 1: Build stage
+# ==========================================
+# Giai đoạn 1: Build mã nguồn với Maven & JDK 21
+# ==========================================
 FROM maven:3.9.9-eclipse-temurin-21-alpine AS builder
 WORKDIR /build
 
-# Cache maven dependencies
+# Tận dụng layer cache của Docker
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
-# Copy source code and package application
+# Copy mã nguồn và đóng gói file JAR
 COPY src ./src
-RUN mvn clean package -DskipTests -B
+RUN mvn clean package -DskipTests
 
-# Stage 2: Production runtime stage
-FROM eclipse-temurin:21-jre-alpine AS runner
+# ==========================================
+# Giai đoạn 2: Runtime image siêu nhẹ (JRE 21)
+# ==========================================
+FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# Create upload directory for media fallback
+# Tạo thư mục lưu trữ ảnh tải lên (uploads)
 RUN mkdir -p /app/uploads/images
 
-# Copy compiled JAR
-COPY --from=builder /build/target/ecommerce-backend-*.jar /app/app.jar
+# Copy file jar từ giai đoạn build
+COPY --from=builder /build/target/ecommerce-backend-1.0.0.jar app.jar
 
-# Render dynamic port configuration and optimized JVM flags for 512MB RAM environment
-ENV PORT=8080 \
-    JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=60.0 -XX:MaxMetaspaceSize=110m -Xss512k -XX:+UseSerialGC -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -Djava.security.egd=file:/dev/./urandom"
+# Cấu hình tối ưu JVM trong container (giới hạn 75% RAM để tránh bị Render Free 512MB OOM-Killed)
+ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
 
+# Mặc định lắng nghe cổng 8080 (Render tự gán biến $PORT khi chạy)
 EXPOSE 8080
 
-ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

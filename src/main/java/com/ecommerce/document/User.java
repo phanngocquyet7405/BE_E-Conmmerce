@@ -42,7 +42,22 @@ public class User {
     private Set<RoleEnum> roles;
 
     @Builder.Default
-    private boolean active = true;
+    @Field("is_active")
+    private boolean active = false;
+
+    @Builder.Default
+    @Field("email_verified")
+    private boolean emailVerified = false;
+
+    @Builder.Default
+    @Field("phone_verified")
+    private boolean phoneVerified = false;
+
+    @Field("otp")
+    private String otp;
+
+    @Field("otp_expiry_time")
+    private Instant otpExpiryTime;
 
     @Builder.Default
     @Field("addresses")
@@ -55,4 +70,12 @@ public class User {
     @LastModifiedDate
     @Field("updated_at")
     private Instant updatedAt;
+
+    public boolean getIsActive() {
+        return this.active;
+    }
+
+    public void setIsActive(boolean isActive) {
+        this.active = isActive;
+    }
 }

@@ -1,70 +1,74 @@
+version: '3.8'
+
 services:
-  mongodb:
-    image: mongo:7.0
-    container_name: ecommerce-mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - ecommerce-network
-
-  redis:
-    image: redis:7.4-alpine
-    container_name: ecommerce-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    networks:
-      - ecommerce-network
-
+  # 1. Ứng dụng Backend Spring Boot
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ecommerce-app
-    restart: unless-stopped
+    container_name: ecommerce-backend-app
+    restart: always
     ports:
       - "8080:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=dev
-      - PORT=8080
+      - SERVER_PORT=8080
       - MONGODB_URI=mongodb://mongodb:27017/ecommerce_dev_db
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=
       - REDIS_SSL_ENABLED=false
-      - UPLOAD_BASE_URL=http://localhost:8080/uploads
+      - JWT_ACCESS_SECRET=bXktc3VwZXItc2VjcmV0LWaccessLtleS1mb3ItZWNvbW1lcmNlLTIwMjYtYmFja2VuZA==
+      - JWT_REFRESH_SECRET=bXktc3VwZXItc2VjcmV0LXJlZnJlc2gta2V5LWZvci1lY29tbWVyY2UtMjAyNi1iYWNrZW5k
+    volumes:
+      - app_uploads:/app/uploads
     depends_on:
       mongodb:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - ecommerce-network
+
+  # 2. MongoDB Local (Dành cho dev offline không cần Atlas)
+  mongodb:
+    image: mongo:7.0
+    container_name: ecommerce-mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=ecommerce_dev_db
+    volumes:
+      - mongo_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/v3/api-docs || exit 1"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand(ping)"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 25s
+    networks:
+      - ecommerce-network
+
+  # 3. Redis Local (Dành cho dev offline không cần Upstash)
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce-redis
+    restart: always
+    ports:
+      - "6379:6379"
     volumes:
-      - app_uploads:/app/uploads
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - ecommerce-network
 
 volumes:
   mongo_data:
+  redis_data:
   app_uploads:
 
 networks:

@@ -4,8 +4,6 @@ import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
@@ -16,10 +14,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Document(collection = "orders")
-@CompoundIndexes({
-    @CompoundIndex(name = "userId_createdAt_idx", def = "{'user_id': 1, 'created_at': -1}"),
-    @CompoundIndex(name = "status_createdAt_idx", def = "{'status': 1, 'created_at': -1}")
-})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -66,6 +60,16 @@ public class Order {
 
     @Field("payment_method")
     private PaymentMethod paymentMethod;
+
+    @Field("payment_status")
+    @Builder.Default
+    private PaymentStatus paymentStatus = PaymentStatus.UNPAID;
+
+    @Field("paid_at")
+    private Instant paidAt;
+
+    @Field("sepay_transaction_id")
+    private String sepayTransactionId;
 
     @Field("status")
     @Builder.Default

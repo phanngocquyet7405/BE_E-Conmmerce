@@ -10,9 +10,7 @@ import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.service.ProfileService;
-import com.ecommerce.service.RedisTokenService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -21,14 +19,12 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProfileServiceImpl implements ProfileService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final RedisTokenService redisTokenService;
 
     @Override
     public UserProfileResponse getProfile(String userId) {
@@ -40,11 +36,13 @@ public class ProfileServiceImpl implements ProfileService {
     public UserProfileResponse updateProfile(String userId, UpdateProfileRequest request) {
         User user = getUser(userId);
         user.setFullName(request.getFullName());
-        user.setPhone(request.getPhone());
+        if (request.getPhone() != null && !request.getPhone().equals(user.getPhone())) {
+            user.setPhone(request.getPhone());
+            user.setPhoneVerified(false);
+        }
         if (request.getAvatarUrl() != null) {
             user.setAvatarUrl(request.getAvatarUrl());
         }
-        log.info("Người dùng {} đã cập nhật thông tin cá nhân", userId);
         return mapToProfileResponse(userRepository.save(user));
     }
 
@@ -56,10 +54,6 @@ public class ProfileServiceImpl implements ProfileService {
         }
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
-
-        // Hủy toàn bộ phiên làm việc / Refresh Token cũ trên tất cả các thiết bị
-        redisTokenService.deleteAllRefreshTokensForUser(userId);
-        log.info("Người dùng {} đã đổi mật khẩu thành công. Toàn bộ phiên cũ đã được thu hồi.", userId);
     }
 
     @Override
@@ -156,6 +150,8 @@ public class ProfileServiceImpl implements ProfileService {
                 .fullName(user.getFullName())
                 .phone(user.getPhone())
                 .avatarUrl(user.getAvatarUrl())
+                .emailVerified(user.isEmailVerified())
+                .phoneVerified(user.isPhoneVerified())
                 .roles(user.getRoles().stream().map(Enum::name).collect(Collectors.toSet()))
                 .addresses(user.getAddresses())
                 .build();
