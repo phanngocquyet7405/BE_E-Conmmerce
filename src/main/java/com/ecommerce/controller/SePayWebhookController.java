@@ -9,6 +9,7 @@ import com.ecommerce.repository.OrderRepository;
 import com.ecommerce.repository.SePayTransactionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.result.UpdateResult;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -50,6 +51,15 @@ public class SePayWebhookController {
 
     @Value("${sepay.webhook-secret:}")
     private String webhookSecret;
+
+    @PostConstruct
+    public void validateConfiguration() {
+        if (!StringUtils.hasText(webhookSecret)) {
+            log.warn("SEPAY_WEBHOOK_SECRET chưa được cấu hình! Mọi Webhook gửi tới SePay sẽ bị từ chối với mã HTTP 401 (Fail-Closed).");
+        } else {
+            log.info("Cấu hình SePay Webhook Secret đã được nạp thành công.");
+        }
+    }
 
     @PostMapping("/sepay-webhook")
     public ResponseEntity<Map<String, Object>> handleWebhook(

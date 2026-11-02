@@ -13,19 +13,31 @@ import com.ecommerce.repository.OrderRepository;
 import com.ecommerce.repository.ProductRepository;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.service.OrderService;
+import com.mongodb.MongoException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.mongodb.MongoTransactionManager;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
@@ -34,10 +46,48 @@ public class OrderServiceImpl implements OrderService {
     private final CartRepository cartRepository;
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
+    private final MongoTemplate mongoTemplate;
     private final AppProperties appProperties;
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    @Autowired(required = false)
+    private MongoTransactionManager transactionManager;
+
+    private static final int MAX_TRANSACTION_RETRY_ATTEMPTS = 3;
 
     @Override
     public OrderResponse checkout(String userId, CheckoutRequest request) {
+        int attempt = 0;
+
+        while (true) {
+            attempt++;
+            try {
+                if (transactionManager != null) {
+                    TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+                    return txTemplate.execute(status -> executeCheckout(userId, request));
+                } else {
+                    return executeCheckout(userId, request);
+                }
+            } catch (Exception ex) {
+                if (isTransientTransactionError(ex) && attempt < MAX_TRANSACTION_RETRY_ATTEMPTS) {
+                    log.warn("Gặp lỗi TransientTransactionError tại lần thử {}/{}. Đang tự động thử lại checkout...",
+                            attempt, MAX_TRANSACTION_RETRY_ATTEMPTS);
+                    try {
+                        Thread.sleep(50L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw ex;
+                    }
+                    continue;
+                }
+                // Giữ nguyên exception gốc ném ra ngoài
+                throw ex;
+            }
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public OrderResponse executeCheckout(String userId, CheckoutRequest request) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED));
 
@@ -57,65 +107,87 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal totalAmount = BigDecimal.ZERO;
 
         for (CartItem cartItem : cart.getItems()) {
-            Product product = productRepository.findById(cartItem.getProductId())
-                    .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
+            // Trừ tồn kho nguyên tử (Atomic Check-and-Set) chống bán vượt tồn kho (Overselling)
+            Query query = new Query(Criteria.where("_id").is(cartItem.getProductId())
+                    .and("stock_quantity").gte(cartItem.getQuantity())
+                    .and("active").is(true));
+            Update update = new Update().inc("stock_quantity", -cartItem.getQuantity());
 
-            if (product.getStockQuantity() < cartItem.getQuantity()) {
+            Product product = mongoTemplate.findAndModify(
+                    query, update, FindAndModifyOptions.options().returnNew(false), Product.class);
+
+            if (product == null) {
+                Product existing = productRepository.findById(cartItem.getProductId()).orElse(null);
+                if (existing == null) {
+                    throw new AppException(ErrorCode.PRODUCT_NOT_FOUND);
+                }
                 throw new AppException(ErrorCode.INSUFFICIENT_STOCK,
-                        "Sản phẩm " + product.getName() + " không đủ số lượng tồn kho");
+                        "Sản phẩm '" + existing.getName() + "' không đủ số lượng trong kho");
             }
 
-            product.setStockQuantity(product.getStockQuantity() - cartItem.getQuantity());
-            productRepository.save(product);
-
-            BigDecimal subTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
-            totalAmount = totalAmount.add(subTotal);
+            BigDecimal itemTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
+            totalAmount = totalAmount.add(itemTotal);
 
             orderItems.add(OrderItem.builder()
                     .productId(product.getId())
-                    .sku(product.getSku())
                     .productName(product.getName())
-                    .thumbnailUrl(product.getThumbnailUrl())
-                    .brandName(product.getBrandName())
+                    .sku(product.getSku())
                     .price(product.getPrice())
                     .quantity(cartItem.getQuantity())
-                    .subTotal(subTotal)
+                    .thumbnailUrl(product.getThumbnailUrl())
+                    .subTotal(itemTotal)
                     .build());
         }
 
-        BigDecimal shippingFee = BigDecimal.valueOf(30000); // 30,000 VND
+        BigDecimal shippingFee = BigDecimal.valueOf(30000);
         BigDecimal finalAmount = totalAmount.add(shippingFee);
-        String orderCode = "ORD-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
 
-        PaymentMethod method = request.getPaymentMethod();
-        String note = request.getNote();
-        if (method == PaymentMethod.COD && (note == null || !note.contains("COD"))) {
-            note = (note != null ? note + " | " : "") + "Thanh toán bằng tiền mặt khi nhận hàng (COD)";
-        }
+        // Sinh mã đơn hàng dạng BETES + 8 số ngẫu nhiên (vd: BETES12345678)
+        String orderCode = generateUniqueOrderCode();
+
+        PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
 
         Order order = Order.builder()
                 .orderCode(orderCode)
                 .userId(userId)
-                .customerName(shippingAddress.getRecipientName())
+                .customerName(user.getFullName())
                 .customerEmail(user.getEmail())
-                .customerPhone(shippingAddress.getPhone())
+                .customerPhone(user.getPhone())
                 .shippingAddress(shippingAddress)
                 .items(orderItems)
                 .totalAmount(totalAmount)
                 .shippingFee(shippingFee)
                 .finalAmount(finalAmount)
-                .paymentMethod(method)
+                .paymentMethod(paymentMethod)
                 .paymentStatus(PaymentStatus.UNPAID)
                 .status(OrderStatus.PENDING)
-                .note(note)
+                .note(request.getNote())
                 .build();
 
         Order savedOrder = orderRepository.save(order);
 
+        // Xóa giỏ hàng sau khi đặt thành công
         cart.getItems().clear();
         cartRepository.save(cart);
 
+        log.info("Khách hàng {} đặt thành công đơn hàng: {}, Tổng tiền: {}", userId, orderCode, finalAmount);
         return mapToOrderResponse(savedOrder);
+    }
+
+    private boolean isTransientTransactionError(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            if (current instanceof MongoException mongoEx
+                    && mongoEx.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null && message.contains("TransientTransactionError")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     @Override
@@ -138,6 +210,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public OrderResponse cancelOrder(String userId, String orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
@@ -155,14 +228,11 @@ public class OrderServiceImpl implements OrderService {
             order.setPaymentStatus(PaymentStatus.REFUNDED);
         }
 
-        for (OrderItem item : order.getItems()) {
-            productRepository.findById(item.getProductId()).ifPresent(product -> {
-                product.setStockQuantity(product.getStockQuantity() + item.getQuantity());
-                productRepository.save(product);
-            });
-        }
+        restoreProductStock(order.getItems());
 
-        return mapToOrderResponse(orderRepository.save(order));
+        Order saved = orderRepository.save(order);
+        log.info("Khách hàng {} đã hủy đơn hàng {}", userId, order.getOrderCode());
+        return mapToOrderResponse(saved);
     }
 
     @Override
@@ -174,6 +244,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public OrderResponse updateOrderStatus(String orderId, UpdateOrderStatusRequest request) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
@@ -195,15 +266,34 @@ public class OrderServiceImpl implements OrderService {
         }
 
         if (next == OrderStatus.CANCELLED) {
-            for (OrderItem item : order.getItems()) {
-                productRepository.findById(item.getProductId()).ifPresent(product -> {
-                    product.setStockQuantity(product.getStockQuantity() + item.getQuantity());
-                    productRepository.save(product);
-                });
-            }
+            restoreProductStock(order.getItems());
         }
 
-        return mapToOrderResponse(orderRepository.save(order));
+        Order saved = orderRepository.save(order);
+        log.info("Admin cập nhật trạng thái đơn {} từ {} sang {}", order.getOrderCode(), current, next);
+        return mapToOrderResponse(saved);
+    }
+
+    private void restoreProductStock(List<OrderItem> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        for (OrderItem item : items) {
+            mongoTemplate.updateFirst(
+                    Query.query(Criteria.where("_id").is(item.getProductId())),
+                    new Update().inc("stock_quantity", item.getQuantity()),
+                    Product.class
+            );
+        }
+        log.info("Đã hoàn kho thành công cho {} mặt hàng", items.size());
+    }
+
+    private String generateUniqueOrderCode() {
+        String code;
+        do {
+            code = "BETES" + (10000000 + secureRandom.nextInt(90000000));
+        } while (orderRepository.findByOrderCode(code).isPresent());
+        return code;
     }
 
     private OrderResponse mapToOrderResponse(Order order) {
@@ -214,17 +304,22 @@ public class OrderServiceImpl implements OrderService {
         String transferContent = null;
 
         if (order.getPaymentMethod() == PaymentMethod.SEPAY || order.getPaymentMethod() == PaymentMethod.BANKING) {
-            bank = appProperties.getSepay().getBankName();
-            accNumber = appProperties.getSepay().getAccountNumber();
-            holder = appProperties.getSepay().getAccountHolder();
-            transferContent = order.getOrderCode();
+            if (appProperties != null && appProperties.getSepay() != null) {
+                bank = appProperties.getSepay().getBankName();
+                accNumber = appProperties.getSepay().getAccountNumber();
+                holder = appProperties.getSepay().getAccountHolder();
+                transferContent = order.getOrderCode();
 
-            String encodedContent = URLEncoder.encode(transferContent, StandardCharsets.UTF_8);
-            qrImageUrl = String.format(
-                    "https://qr.sepay.vn/img?acc=%s&bank=%s&amount=%s&des=%s&template=%s",
-                    accNumber, bank, order.getFinalAmount().toBigInteger().toString(),
-                    encodedContent, appProperties.getSepay().getQrTemplate()
-            );
+                String encodedContent = URLEncoder.encode(transferContent, StandardCharsets.UTF_8);
+                qrImageUrl = String.format(
+                        "https://qr.sepay.vn/img?acc=%s&bank=%s&amount=%s&des=%s&template=%s",
+                        accNumber != null ? accNumber : "",
+                        bank != null ? bank : "",
+                        order.getFinalAmount() != null ? order.getFinalAmount().toBigInteger().toString() : "0",
+                        encodedContent,
+                        appProperties.getSepay().getQrTemplate() != null ? appProperties.getSepay().getQrTemplate() : "compact"
+                );
+            }
         }
 
         return OrderResponse.builder()

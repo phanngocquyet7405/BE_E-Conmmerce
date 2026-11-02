@@ -15,6 +15,7 @@ import com.ecommerce.repository.CategoryRepository;
 import com.ecommerce.repository.ProductRepository;
 import com.ecommerce.service.ProductService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -27,7 +28,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProductServiceImpl implements ProductService {
@@ -73,7 +76,9 @@ public class ProductServiceImpl implements ProductService {
             product.setBrandName(brand.getName());
         }
 
-        return productMapper.toResponse(productRepository.save(product));
+        Product saved = productRepository.save(product);
+        log.info("Đã tạo sản phẩm mới: id={}, sku={}, name={}", saved.getId(), saved.getSku(), saved.getName());
+        return productMapper.toResponse(saved);
     }
 
     @Override
@@ -103,7 +108,9 @@ public class ProductServiceImpl implements ProductService {
             product.setBrandName(null);
         }
 
-        return productMapper.toResponse(productRepository.save(product));
+        Product saved = productRepository.save(product);
+        log.info("Đã cập nhật sản phẩm: id={}, sku={}", saved.getId(), saved.getSku());
+        return productMapper.toResponse(saved);
     }
 
     @Override
@@ -112,6 +119,7 @@ public class ProductServiceImpl implements ProductService {
                 .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
         product.setActive(false);
         productRepository.save(product);
+        log.info("Đã vô hiệu hóa sản phẩm: id={}", id);
     }
 
     @Override
@@ -119,14 +127,14 @@ public class ProductServiceImpl implements ProductService {
         Query query = new Query();
         query.addCriteria(Criteria.where("active").is(true));
 
-        // 1. Tìm kiếm từ khóa theo tên, mô tả, SKU hoặc tên thương hiệu
+        // 1. Tìm kiếm từ khóa theo tên, mô tả, SKU hoặc tên thương hiệu (Có escape Pattern.quote chống ReDoS)
         if (StringUtils.hasText(criteria.getKeyword())) {
-            String regex = ".*" + criteria.getKeyword().trim() + ".*";
+            String safeRegex = ".*" + Pattern.quote(criteria.getKeyword().trim()) + ".*";
             query.addCriteria(new Criteria().orOperator(
-                    Criteria.where("name").regex(regex, "i"),
-                    Criteria.where("description").regex(regex, "i"),
-                    Criteria.where("sku").regex(regex, "i"),
-                    Criteria.where("brand_name").regex(regex, "i")
+                    Criteria.where("name").regex(safeRegex, "i"),
+                    Criteria.where("description").regex(safeRegex, "i"),
+                    Criteria.where("sku").regex(safeRegex, "i"),
+                    Criteria.where("brand_name").regex(safeRegex, "i")
             ));
         }
 
@@ -151,10 +159,15 @@ public class ProductServiceImpl implements ProductService {
 
         long totalElements = mongoTemplate.count(query, Product.class);
 
+        // Giới hạn an toàn phân trang chống DoS RAM
+        int validatedSize = Math.min(Math.max(criteria.getSize(), 1), 50);
+        int validatedPage = Math.max(criteria.getPage(), 0);
+
+        String sortBy = StringUtils.hasText(criteria.getSortBy()) ? criteria.getSortBy() : "createdAt";
         Sort sort = "asc".equalsIgnoreCase(criteria.getSortDir())
-                ? Sort.by(criteria.getSortBy()).ascending()
-                : Sort.by(criteria.getSortBy()).descending();
-        Pageable pageable = PageRequest.of(criteria.getPage(), criteria.getSize(), sort);
+                ? Sort.by(sortBy).ascending()
+                : Sort.by(sortBy).descending();
+        Pageable pageable = PageRequest.of(validatedPage, validatedSize, sort);
         query.with(pageable);
 
         List<Product> products = mongoTemplate.find(query, Product.class);

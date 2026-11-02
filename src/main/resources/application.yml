@@ -7,11 +7,23 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 50MB
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db?maxPoolSize=15&minPoolSize=2&serverSelectionTimeoutMS=5000}
+      auto-index-creation: ${MONGODB_AUTO_INDEX_CREATION:true}
+    redis:
+      url: ${REDIS_URL:}
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+      timeout: 500ms
   mail:
     host: ${SPRING_MAIL_HOST:smtp.gmail.com}
     port: ${SPRING_MAIL_PORT:587}
-    username: ${SPRING_MAIL_USERNAME:furiousfast189@gmail.com}
-    password: ${SPRING_MAIL_PASSWORD:qzzfhgonzslsaesz}
+    username: ${SPRING_MAIL_USERNAME:}
+    password: ${SPRING_MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -25,18 +37,29 @@ spring:
 
 server:
   port: ${PORT:${SERVER_PORT:8080}}
+  forward-headers-strategy: native
   servlet:
     context-path: /
+  tomcat:
+    threads:
+      max: 30
+      min-spare: 5
+    max-connections: 100
+    accept-count: 20
+  compression:
+    enabled: true
+    mime-types: application/json,text/plain,text/xml,text/css,application/javascript
+    min-response-size: 1024
 
 app:
   jwt:
     issuer: ecommerce-single-store
-    access-secret: ${JWT_ACCESS_SECRET:bXktc3VwZXItc2VjcmV0LWaccessLtleS1mb3ItZWNvbW1lcmNlLTIwMjYtYmFja2VuZA==}
-    refresh-secret: ${JWT_REFRESH_SECRET:bXktc3VwZXItc2VjcmV0LXJlZnJlc2gta2V5LWZvci1lY29tbWVyY2UtMjAyNi1iYWNrZW5k}
+    access-secret: ${JWT_ACCESS_SECRET:}
+    refresh-secret: ${JWT_REFRESH_SECRET:}
     access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:3600000}       # 1 Giờ
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}   # 7 Ngày
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8081}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
   upload:
     dir: ${UPLOAD_DIR:uploads}
     base-url: ${UPLOAD_BASE_URL:http://localhost:8080/uploads}
@@ -46,13 +69,13 @@ app:
     bank-name: ${SEPAY_BANK_NAME:MBBank}
     account-holder: ${SEPAY_ACCOUNT_HOLDER:NGUYEN VAN A}
     qr-template: ${SEPAY_QR_TEMPLATE:compact}
-  brevo:
-    api-key: ${BREVO_API_KEY:}
-    sms-sender: ${BREVO_SMS_SENDER:Ecommerce}
-    sender-email: ${BREVO_SENDER_EMAIL:no-reply@ecommerce.com}
-    sender-name: ${BREVO_SENDER_NAME:Ecommerce Store}
+
+sepay:
+  bank-id: ${SEPAY_BANK_ID:}
+  bank-account: ${SEPAY_BANK_ACCOUNT:}
+  webhook-secret: ${SEPAY_WEBHOOK_SECRET:}
 
 cloudinary:
-  cloud-name: ${CLOUDINARY_CLOUD_NAME:dpebxdjot}
-  api-key: ${CLOUDINARY_API_KEY:317345733485741}
-  api-secret: ${CLOUDINARY_API_SECRET:FEVbuvoT7OWLuE_qVfZwARIvkpo}
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+  api-key: ${CLOUDINARY_API_KEY:}
+  api-secret: ${CLOUDINARY_API_SECRET:}

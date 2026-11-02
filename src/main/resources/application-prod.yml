@@ -11,7 +11,7 @@ spring:
       password: ${REDIS_PASSWORD:}
       ssl:
         enabled: ${REDIS_SSL_ENABLED:true}
-      timeout: 3000ms
+      timeout: 500ms
 
 logging:
   level:

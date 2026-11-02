@@ -32,7 +32,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
             String key = REFRESH_KEY_PREFIX + userId + ":" + tokenId;
             redisTemplate.opsForValue().set(key, "ACTIVE", ttlMillis, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
-            log.warn("Lưu ý: Không thể kết nối tới Redis để lưu refresh token. Đăng nhập vẫn thành công: {}", e.getMessage());
+            log.warn("Không thể lưu refresh token vào Redis: {}", e.getMessage());
         }
     }
 
@@ -42,8 +42,8 @@ public class RedisTokenServiceImpl implements RedisTokenService {
             String key = REFRESH_KEY_PREFIX + userId + ":" + tokenId;
             return Boolean.TRUE.equals(redisTemplate.hasKey(key));
         } catch (Exception e) {
-            log.warn("Lưu ý: Không thể kết nối tới Redis để kiểm tra refresh token: {}", e.getMessage());
-            return true;
+            log.error("Lỗi khi kết nối Redis để kiểm tra refresh token: {}. Áp dụng Fail-Closed từ chối phiên.", e.getMessage());
+            return false; // Fail-Closed bảo mật: không cho phép token nếu Redis không xác thực được
         }
     }
 
@@ -89,6 +89,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
             String key = BLACKLIST_KEY_PREFIX + accessToken;
             return Boolean.TRUE.equals(redisTemplate.hasKey(key));
         } catch (Exception e) {
+            log.warn("Lỗi kiểm tra blacklist token trên Redis: {}", e.getMessage());
             return false;
         }
     }
@@ -102,6 +103,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
                     : 3600000L;
 
             String key = BLOCKED_USER_PREFIX + userId;
+            // Ghi giá trị là epoch giây lúc gọi, TTL = TTL access token
             redisTemplate.opsForValue().set(key, String.valueOf(epochSeconds), ttlMillis, TimeUnit.MILLISECONDS);
             deleteAllRefreshTokensForUser(userId);
             log.info("Đã ghi Redis blocked:user:{} với timestamp={} (TTL={}ms) và thu hồi refresh token",
@@ -132,6 +134,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
                 return false;
             }
             long blockedAtEpochSeconds = Long.parseLong(val.toString());
+            // Trả về true khi key tồn tại và token được cấp TRƯỚC mốc khóa
             return issuedAtSeconds < blockedAtEpochSeconds;
         } catch (Exception e) {
             log.warn("Lỗi kiểm tra blocked user trên Redis (fail-open): {}", e.getMessage());

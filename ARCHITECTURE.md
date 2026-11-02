@@ -277,16 +277,16 @@ SERVER_PORT=8080
 
 # Link MongoDB Atlas mẫu (Thay chuỗi cluster của bạn khi có link chính xác)
 # Cú pháp: mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<database_name>?retryWrites=true&w=majority
-MONGODB_URI=mongodb+srv://student_dev:DemoPassword123@cluster0.abcde.mongodb.net/ecommerce_db?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.abcde.mongodb.net/ecommerce_db?retryWrites=true&w=majority
 
 # Cấu hình Redis (Local hoặc Upstash Cloud)
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=
 
-# JWT Secrets (Chuỗi Base64 >= 256-bit)
-JWT_ACCESS_SECRET=bXktc3VwZXItc2VjcmV0LWaccessLtleS1mb3ItZWNvbW1lcmNlLTIwMjYtYmFja2VuZA==
-JWT_REFRESH_SECRET=bXktc3VwZXItc2VjcmV0LXJlZnJlc2gta2V5LWZvci1lY29tbWVyY2UtMjAyNi1iYWNrZW5k
+# JWT Secrets (Chuỗi Base64 >= 256-bit, sinh bằng openssl rand -base64 32)
+JWT_ACCESS_SECRET=your_jwt_access_secret_base64_placeholder_min_32_bytes_
+JWT_REFRESH_SECRET=your_jwt_refresh_secret_base64_placeholder_min_32_bytes
 JWT_ACCESS_EXPIRATION_MS=3600000
 JWT_REFRESH_EXPIRATION_MS=604800000
 
@@ -309,8 +309,8 @@ server:
 app:
   jwt:
     issuer: ecommerce-single-store
-    access-secret: ${JWT_ACCESS_SECRET:bXktc3VwZXItc2VjcmV0LWaccessLtleS1mb3ItZWNvbW1lcmNlLTIwMjYtYmFja2VuZA==}
-    refresh-secret: ${JWT_REFRESH_SECRET:bXktc3VwZXItc2VjcmV0LXJlZnJlc2gta2V5LWZvci1lY29tbWVyY2UtMjAyNi1iYWNrZW5k}
+    access-secret: ${JWT_ACCESS_SECRET:}
+    refresh-secret: ${JWT_REFRESH_SECRET:}
     access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:3600000}       # 1 Giờ
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}   # 7 Ngày
   cors:

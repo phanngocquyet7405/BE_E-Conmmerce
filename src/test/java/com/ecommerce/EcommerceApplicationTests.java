@@ -8,7 +8,11 @@ import org.springframework.security.web.SecurityFilterChain;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+    "spring.config.import=",
+    "spring.data.mongodb.uri=mongodb://localhost:27017/ecommerce_test_db",
+    "spring.data.mongodb.auto-index-creation=false"
+})
 class EcommerceApplicationTests {
 
     @Autowired
