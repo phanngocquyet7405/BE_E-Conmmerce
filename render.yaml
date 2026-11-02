@@ -34,9 +34,15 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: SPRING_MAIL_HOST
+        value: "in-v3.mailjet.com"
+      - key: SPRING_MAIL_PORT
+        value: "80"
       - key: SPRING_MAIL_USERNAME
         sync: false
       - key: SPRING_MAIL_PASSWORD
+        sync: false
+      - key: SPRING_MAIL_FROM
         sync: false
       - key: SEPAY_BANK_ID
         sync: false
