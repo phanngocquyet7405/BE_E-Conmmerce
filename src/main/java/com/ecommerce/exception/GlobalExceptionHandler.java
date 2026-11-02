@@ -63,7 +63,7 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.builder()
                         .code(ec.getCode())
                         .error(ec.name())
-                        .message(ec.getMessage())
+                        .message(ex.getMessage())
                         .path(request.getRequestURI())
                         .build());
     }
@@ -165,7 +165,7 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.builder()
                         .code(ec.getCode())
                         .error(ec.name())
-                        .message(ex.getMessage())
+                        .message(ec.getMessage())
                         .path(request.getRequestURI())
                         .build());
     }

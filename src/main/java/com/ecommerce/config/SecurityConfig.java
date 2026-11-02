@@ -65,14 +65,18 @@ public class SecurityConfig {
                     ApiRoutes.Products.PUBLIC_BASE + "/**",
                     ApiRoutes.Categories.PUBLIC_BASE + "/**",
                     ApiRoutes.Brands.PUBLIC_BASE + "/**",
+                    "/api/payments/sepay-webhook",
+                    ApiRoutes.Payment.BASE + ApiRoutes.Payment.SEPAY_WEBHOOK,
                     "/uploads/**",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html"
                 ).permitAll()
 
-                // 2. Upload ảnh: Cho phép người dùng đã xác thực
+                // 2. Upload ảnh & Các endpoint thanh toán còn lại yêu cầu authenticated
                 .requestMatchers(ApiRoutes.Media.BASE + "/**").authenticated()
+                .requestMatchers(ApiRoutes.Payment.BASE + "/**").authenticated()
+                .requestMatchers("/api/payments/**").authenticated()
 
                 // 3. Quản trị viên
                 .requestMatchers(ApiRoutes.API_V1 + "/admin/**").hasRole("ADMIN")

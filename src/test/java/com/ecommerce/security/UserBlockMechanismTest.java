@@ -63,6 +63,9 @@ class UserBlockMechanismTest {
     @Mock
     private JwtUtil jwtUtil;
 
+    @Mock
+    private com.ecommerce.service.EmailService emailService;
+
     private AppProperties appProperties;
     private RedisTokenServiceImpl redisTokenService;
     private UserServiceImpl userService;
@@ -78,7 +81,7 @@ class UserBlockMechanismTest {
         userService = new UserServiceImpl(userRepository, redisTokenService);
         authService = new AuthServiceImpl(
                 userRepository, passwordEncoder, authenticationManager,
-                jwtUtil, redisTokenService, appProperties
+                jwtUtil, redisTokenService, emailService, appProperties
         );
     }
 

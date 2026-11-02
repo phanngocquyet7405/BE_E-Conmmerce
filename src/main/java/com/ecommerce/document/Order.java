@@ -67,6 +67,16 @@ public class Order {
     @Field("payment_method")
     private PaymentMethod paymentMethod;
 
+    @Field("payment_status")
+    @Builder.Default
+    private PaymentStatus paymentStatus = PaymentStatus.UNPAID;
+
+    @Field("paid_at")
+    private Instant paidAt;
+
+    @Field("sepay_transaction_id")
+    private String sepayTransactionId;
+
     @Field("status")
     @Builder.Default
     private OrderStatus status = OrderStatus.PENDING;

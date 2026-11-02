@@ -1,6 +1,7 @@
 package com.ecommerce.service.impl;
 
 import com.ecommerce.common.response.PageResponse;
+import com.ecommerce.config.AppProperties;
 import com.ecommerce.document.*;
 import com.ecommerce.dto.request.CheckoutRequest;
 import com.ecommerce.dto.request.UpdateOrderStatusRequest;
@@ -29,9 +30,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 @Slf4j
 @Service
@@ -43,6 +47,8 @@ public class OrderServiceImpl implements OrderService {
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
     private final MongoTemplate mongoTemplate;
+    private final AppProperties appProperties;
+    private final SecureRandom secureRandom = new SecureRandom();
 
     @Autowired(required = false)
     private MongoTransactionManager transactionManager;
@@ -112,54 +118,59 @@ public class OrderServiceImpl implements OrderService {
 
             if (product == null) {
                 Product existing = productRepository.findById(cartItem.getProductId()).orElse(null);
-                if (existing == null || !Boolean.TRUE.equals(existing.getActive())) {
-                    throw new AppException(ErrorCode.PRODUCT_NOT_FOUND, "Sản phẩm không tồn tại hoặc đã ngừng kinh doanh");
+                if (existing == null) {
+                    throw new AppException(ErrorCode.PRODUCT_NOT_FOUND);
                 }
                 throw new AppException(ErrorCode.INSUFFICIENT_STOCK,
-                        "Sản phẩm " + existing.getName() + " không đủ số lượng tồn kho");
+                        "Sản phẩm '" + existing.getName() + "' không đủ số lượng trong kho");
             }
 
-            BigDecimal subTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
-            totalAmount = totalAmount.add(subTotal);
+            BigDecimal itemTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
+            totalAmount = totalAmount.add(itemTotal);
 
             orderItems.add(OrderItem.builder()
                     .productId(product.getId())
-                    .sku(product.getSku())
                     .productName(product.getName())
-                    .thumbnailUrl(product.getThumbnailUrl())
-                    .brandName(product.getBrandName())
+                    .sku(product.getSku())
                     .price(product.getPrice())
                     .quantity(cartItem.getQuantity())
-                    .subTotal(subTotal)
+                    .thumbnailUrl(product.getThumbnailUrl())
+                    .subTotal(itemTotal)
                     .build());
         }
 
         BigDecimal shippingFee = BigDecimal.valueOf(30000);
         BigDecimal finalAmount = totalAmount.add(shippingFee);
-        String orderCode = "ORD-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+
+        // Sinh mã đơn hàng dạng BETES + 8 số ngẫu nhiên (vd: BETES12345678)
+        String orderCode = generateUniqueOrderCode();
+
+        PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
 
         Order order = Order.builder()
                 .orderCode(orderCode)
                 .userId(userId)
-                .customerName(shippingAddress.getRecipientName())
+                .customerName(user.getFullName())
                 .customerEmail(user.getEmail())
-                .customerPhone(shippingAddress.getPhone())
+                .customerPhone(user.getPhone())
                 .shippingAddress(shippingAddress)
                 .items(orderItems)
                 .totalAmount(totalAmount)
                 .shippingFee(shippingFee)
                 .finalAmount(finalAmount)
-                .paymentMethod(request.getPaymentMethod())
+                .paymentMethod(paymentMethod)
+                .paymentStatus(PaymentStatus.UNPAID)
                 .status(OrderStatus.PENDING)
                 .note(request.getNote())
                 .build();
 
         Order savedOrder = orderRepository.save(order);
 
+        // Xóa giỏ hàng sau khi đặt thành công
         cart.getItems().clear();
         cartRepository.save(cart);
 
-        log.info("Đặt hàng thành công: orderCode={}, userId={}, finalAmount={}", orderCode, userId, finalAmount);
+        log.info("Khách hàng {} đặt thành công đơn hàng: {}, Tổng tiền: {}", userId, orderCode, finalAmount);
         return mapToOrderResponse(savedOrder);
     }
 
@@ -213,6 +224,10 @@ public class OrderServiceImpl implements OrderService {
         }
 
         order.setStatus(OrderStatus.CANCELLED);
+        if (order.getPaymentStatus() == PaymentStatus.PAID) {
+            order.setPaymentStatus(PaymentStatus.REFUNDED);
+        }
+
         restoreProductStock(order.getItems());
 
         Order saved = orderRepository.save(order);
@@ -244,6 +259,12 @@ public class OrderServiceImpl implements OrderService {
 
         order.setStatus(next);
 
+        // Nếu COD giao thành công thì tự động chuyển paymentStatus sang PAID
+        if (next == OrderStatus.DELIVERED && order.getPaymentMethod() == PaymentMethod.COD) {
+            order.setPaymentStatus(PaymentStatus.PAID);
+            order.setPaidAt(Instant.now());
+        }
+
         if (next == OrderStatus.CANCELLED) {
             restoreProductStock(order.getItems());
         }
@@ -267,7 +288,40 @@ public class OrderServiceImpl implements OrderService {
         log.info("Đã hoàn kho thành công cho {} mặt hàng", items.size());
     }
 
+    private String generateUniqueOrderCode() {
+        String code;
+        do {
+            code = "BETES" + (10000000 + secureRandom.nextInt(90000000));
+        } while (orderRepository.findByOrderCode(code).isPresent());
+        return code;
+    }
+
     private OrderResponse mapToOrderResponse(Order order) {
+        String qrImageUrl = null;
+        String bank = null;
+        String accNumber = null;
+        String holder = null;
+        String transferContent = null;
+
+        if (order.getPaymentMethod() == PaymentMethod.SEPAY || order.getPaymentMethod() == PaymentMethod.BANKING) {
+            if (appProperties != null && appProperties.getSepay() != null) {
+                bank = appProperties.getSepay().getBankName();
+                accNumber = appProperties.getSepay().getAccountNumber();
+                holder = appProperties.getSepay().getAccountHolder();
+                transferContent = order.getOrderCode();
+
+                String encodedContent = URLEncoder.encode(transferContent, StandardCharsets.UTF_8);
+                qrImageUrl = String.format(
+                        "https://qr.sepay.vn/img?acc=%s&bank=%s&amount=%s&des=%s&template=%s",
+                        accNumber != null ? accNumber : "",
+                        bank != null ? bank : "",
+                        order.getFinalAmount() != null ? order.getFinalAmount().toBigInteger().toString() : "0",
+                        encodedContent,
+                        appProperties.getSepay().getQrTemplate() != null ? appProperties.getSepay().getQrTemplate() : "compact"
+                );
+            }
+        }
+
         return OrderResponse.builder()
                 .id(order.getId())
                 .orderCode(order.getOrderCode())
@@ -281,9 +335,16 @@ public class OrderServiceImpl implements OrderService {
                 .shippingFee(order.getShippingFee())
                 .finalAmount(order.getFinalAmount())
                 .paymentMethod(order.getPaymentMethod())
+                .paymentStatus(order.getPaymentStatus())
+                .paidAt(order.getPaidAt())
                 .status(order.getStatus())
                 .note(order.getNote())
                 .createdAt(order.getCreatedAt())
+                .qrImageUrl(qrImageUrl)
+                .bankName(bank)
+                .accountNumber(accNumber)
+                .accountHolder(holder)
+                .transferContent(transferContent)
                 .build();
     }
 }

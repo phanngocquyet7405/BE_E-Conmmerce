@@ -107,7 +107,7 @@ public class MediaServiceImpl implements MediaService {
 
             String uniqueFileName = UUID.randomUUID().toString() + safeExtension;
             Path targetLocation = targetFolder.resolve(uniqueFileName);
-            
+
             try (InputStream is = file.getInputStream()) {
                 Files.copy(is, targetLocation, StandardCopyOption.REPLACE_EXISTING);
             }

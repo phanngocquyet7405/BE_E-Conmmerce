@@ -10,4 +10,9 @@ public interface RedisTokenService {
     void blockUser(String userId);
     void unblockUser(String userId);
     boolean isUserBlocked(String userId, long issuedAtSeconds);
+
+    // Quản lý OTP
+    void saveOtp(String key, String otp, long ttlSeconds);
+    String getOtp(String key);
+    void deleteOtp(String key);
 }

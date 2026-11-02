@@ -12,6 +12,11 @@ public final class ApiRoutes {
         public static final String REGISTER = "/register";
         public static final String REFRESH = "/refresh-token";
         public static final String LOGOUT = "/logout";
+        public static final String FORGOT_PASSWORD = "/forgot-password";
+        public static final String VERIFY_OTP = "/verify-otp";
+        public static final String RESET_PASSWORD = "/reset-password";
+        public static final String SEND_VERIFICATION_OTP = "/send-verification-otp";
+        public static final String VERIFY_ACCOUNT = "/verify-account";
     }
 
     public static final class Profile {
@@ -61,6 +66,14 @@ public final class ApiRoutes {
         public static final String CANCEL = "/{id}/cancel";
         public static final String ADMIN_BASE = API_V1 + "/admin/orders";
         public static final String UPDATE_STATUS = "/{id}/status";
+    }
+
+    public static final class Payment {
+        private Payment() {}
+        public static final String BASE = API_V1 + "/payment";
+        public static final String SEPAY_WEBHOOK = "/sepay/webhook";
+        public static final String SEPAY_QR_INFO = "/sepay/qr-info/{orderId}";
+        public static final String STATUS = "/status/{orderId}";
     }
 
     public static final class Media {

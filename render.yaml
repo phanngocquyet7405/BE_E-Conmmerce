@@ -34,3 +34,13 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: SPRING_MAIL_USERNAME
+        sync: false
+      - key: SPRING_MAIL_PASSWORD
+        sync: false
+      - key: SEPAY_BANK_ID
+        sync: false
+      - key: SEPAY_BANK_ACCOUNT
+        sync: false
+      - key: SEPAY_WEBHOOK_SECRET
+        sync: false

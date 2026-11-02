@@ -28,9 +28,9 @@ public class CustomUserDetails implements UserDetails {
                 .collect(Collectors.toSet());
     }
 
-    public CustomUserDetails(String id, String email, Collection<? extends GrantedAuthority> authorities) {
+    public CustomUserDetails(String id, String username, Collection<? extends GrantedAuthority> authorities) {
         this.id = id;
-        this.username = email;
+        this.username = username;
         this.password = "";
         this.active = true;
         this.authorities = authorities;

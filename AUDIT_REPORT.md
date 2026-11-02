@@ -108,4 +108,16 @@ Khi vận hành trên **Render gói Free**:
 *   **IP-Based Rate Limiting:** Xây dựng `RateLimitFilter` kiểm soát tần suất bằng Redis: tối đa 5 lần/phút cho login/register, 10 lần/phút cho refresh-token và upload ảnh, trả về HTTP 429 kèm header `Retry-After: 60`.
 *   **HTTP Security Headers:** Bật HSTS (1 năm), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` trong `SecurityConfig`.
 *   **Static Asset Caching & ETag:** Cấu hình Cache-Control 30 ngày cho `/uploads/**` và kích hoạt `ShallowEtagHeaderFilter` hỗ trợ HTTP 304 Not Modified trong `WebMvcConfig`.
-*   **Bộ Unit Tests Tự Động:** Viết 8 unit tests kiểm tra toàn diện luồng trừ kho Checkout (`OrderServiceTest`) và xác thực JWT Claims/Signature (`JwtUtilTest`) - toàn bộ đều đạt kết quả PASS 100%.
+
+### ✅ ĐỢT 4: Khôi phục cấu hình Audit sau tích hợp tính năng mới (Email OTP & SePay VietQR) (Đã hoàn tất)
+*   **Khôi phục hạ tầng & JVM Flags:** Đảm bảo `Dockerfile` giữ nguyên các cờ JVM Render 512MB (`MaxRAMPercentage=60.0`, `MaxMetaspaceSize=110m`, `Xss512k`, `SerialGC`, `TieredStopAtLevel=1`), `render.yaml`, `docker-compose.yml`, `application-prod.yml` (`auto-index-creation: false`).
+*   **Bảo mật & Whitelist:** Nối lại `RateLimitFilter`, security headers, CORS an toàn trong `SecurityConfig`. Giữ route `/api/payments/sepay-webhook` ở `permitAll` và xác thực chữ ký HMAC-SHA256, constant-time so sánh, chống replay timestamp (< 300s); các route `/api/payments/**` khác yêu cầu authenticated.
+*   **Dữ liệu & Concurrency:** Khôi phục `findAndModify` nguyên tử kết hợp bù kho và `generateUniqueOrderCode` tiền tố `BETES` cho thanh toán SePay trong `OrderServiceImpl.java`. Khôi phục `@CompoundIndexes` và `@Cacheable/@CacheEvict`.
+*   **Làm sạch bí mật (Zero Plaintext Secrets):** Thay thế toàn bộ secret thật (Gmail app password, SePay webhook secret, Cloudinary key, MongoDB URI) bằng biến môi trường/placeholder.
+*   **Bộ Unit Tests Tự Động Toàn Diện:** Mở rộng và thực thi thành công **32/32 unit tests (PASS 100%)**, bao gồm:
+    *   `SePayWebhookControllerTest` (10 tests)
+    *   `UserBlockMechanismTest` (7 tests)
+    *   `AuthEmailOtpFlowTest` (5 tests)
+    *   `JwtUtilTest` (5 tests)
+    *   `OrderServiceTest` (4 tests)
+    *   `EcommerceApplicationTests` (1 test)

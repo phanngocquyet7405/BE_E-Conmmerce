@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: "optional:file:.env[.properties]"
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27017/ecommerce_dev_db?maxPoolSize=15&minPoolSize=2&serverSelectionTimeoutMS=5000}
@@ -20,8 +22,8 @@ spring:
 
 app:
   jwt:
-    access-secret: ${JWT_ACCESS_SECRET:bXktc3VwZXItc2VjcmV0LWaccessLtleS1mb3ItZWNvbW1lcmNlLTIwMjYtYmFja2VuZA==}
-    refresh-secret: ${JWT_REFRESH_SECRET:bXktc3VwZXItc2VjcmV0LXJlZnJlc2gta2V5LWZvci1lY29tbWVyY2UtMjAyNi1iYWNrZW5k}
+    access-secret: ${JWT_ACCESS_SECRET:}
+    refresh-secret: ${JWT_REFRESH_SECRET:}
 
 logging:
   level:
