@@ -86,9 +86,14 @@ public class AuthServiceImpl implements AuthService {
             log.warn("Không thể lưu OTP vào Redis: {}", ex.getMessage());
         }
 
-        // 2. Gửi email chứa mã OTP xác thực qua JavaMailSender
-        emailService.sendOtpEmail(email, otp);
-        log.info("Đã tạo tài khoản cho {} và gửi OTP xác thực thành công.", email);
+        // 2. Gửi email chứa mã OTP xác thực qua JavaMailSender (kèm fallback an toàn khi Cloud chặn cổng SMTP)
+        try {
+            emailService.sendOtpEmail(email, otp);
+            log.info("Đã tạo tài khoản cho {} và gửi OTP xác thực thành công.", email);
+        } catch (Exception ex) {
+            log.warn("Không thể gửi email qua SMTP (Cloud như Render Free chặn cổng 587/465: {}). => [OTP FALLBACK] Mã OTP xác thực cho email {}: [{}]",
+                    ex.getMessage(), email, otp);
+        }
     }
 
     /**
@@ -264,7 +269,12 @@ public class AuthServiceImpl implements AuthService {
         userRepository.save(user);
 
         redisTokenService.saveOtp("verify-account:" + user.getEmail(), otp, 300);
-        emailService.sendOtpEmail(user.getEmail(), otp);
+        try {
+            emailService.sendOtpEmail(user.getEmail(), otp);
+        } catch (Exception ex) {
+            log.warn("Không thể gửi email xác minh qua SMTP (Render Free chặn cổng 587: {}). => [OTP FALLBACK] Mã OTP cho email {}: [{}]",
+                    ex.getMessage(), user.getEmail(), otp);
+        }
     }
 
     @Override
