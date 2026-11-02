@@ -20,7 +20,7 @@ public class EmailServiceImpl implements EmailService {
 
     private final JavaMailSender mailSender;
 
-    @Value("${spring.mail.username:}")
+    @Value("${spring.mail.from:${spring.mail.username:no-reply@ecommerce.com}}")
     private String senderEmail;
 
     @Override
@@ -40,7 +40,8 @@ public class EmailServiceImpl implements EmailService {
                     StandardCharsets.UTF_8.name()
             );
 
-            helper.setFrom(senderEmail, "Ecommerce Store");
+            String from = (senderEmail != null && senderEmail.contains("@")) ? senderEmail : "no-reply@ecommerce.com";
+            helper.setFrom(from, "Ecommerce Store");
             helper.setTo(toEmail);
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
