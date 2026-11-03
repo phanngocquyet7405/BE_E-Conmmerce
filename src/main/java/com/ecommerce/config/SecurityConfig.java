@@ -66,7 +66,6 @@ public class SecurityConfig {
                     ApiRoutes.Categories.PUBLIC_BASE + "/**",
                     ApiRoutes.Brands.PUBLIC_BASE + "/**",
                     "/api/payments/sepay-webhook",
-                    ApiRoutes.Payment.BASE + ApiRoutes.Payment.SEPAY_WEBHOOK,
                     "/uploads/**",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",

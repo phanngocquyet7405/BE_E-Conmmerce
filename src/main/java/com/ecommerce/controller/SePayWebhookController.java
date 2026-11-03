@@ -1,6 +1,7 @@
 package com.ecommerce.controller;
 
 import com.ecommerce.document.Order;
+import com.ecommerce.document.OrderStatus;
 import com.ecommerce.document.PaymentMethod;
 import com.ecommerce.document.PaymentStatus;
 import com.ecommerce.document.SePayTransaction;
@@ -189,13 +190,14 @@ public class SePayWebhookController {
                                     .and("paymentStatus").is(PaymentStatus.UNPAID));
                             Update update = new Update()
                                     .set("paymentStatus", PaymentStatus.PAID)
+                                    .set("status", OrderStatus.CONFIRMED)
                                     .set("paidAt", Instant.now())
                                     .set("sepayTransactionId", String.valueOf(request.getId()))
                                     .set("updatedAt", Instant.now());
 
                             UpdateResult updateResult = mongoTemplate.updateFirst(query, update, Order.class);
                             if (updateResult.getModifiedCount() > 0) {
-                                log.info("SePay Webhook: Cập nhật thành công PAID cho đơn hàng: {}", order.getOrderCode());
+                                log.info("SePay Webhook: Cập nhật thành công PAID và CONFIRMED cho đơn hàng: {}", order.getOrderCode());
                             } else {
                                 log.warn("SePay Webhook: Đơn hàng {} không thể cập nhật (có thể đã được xử lý bởi luồng đồng thời).", order.getOrderCode());
                             }

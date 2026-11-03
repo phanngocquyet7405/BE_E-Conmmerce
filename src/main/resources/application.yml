@@ -64,15 +64,11 @@ app:
     dir: ${UPLOAD_DIR:uploads}
     base-url: ${UPLOAD_BASE_URL:http://localhost:8080/uploads}
   sepay:
-    api-key: ${SEPAY_API_KEY:}
-    account-number: ${SEPAY_ACCOUNT_NUMBER:0123456789}
-    bank-name: ${SEPAY_BANK_NAME:MBBank}
     account-holder: ${SEPAY_ACCOUNT_HOLDER:NGUYEN VAN A}
-    qr-template: ${SEPAY_QR_TEMPLATE:compact}
 
 sepay:
-  bank-id: ${SEPAY_BANK_ID:}
-  bank-account: ${SEPAY_BANK_ACCOUNT:}
+  bank-id: ${SEPAY_BANK_ID:MBBank}
+  bank-account: ${SEPAY_BANK_ACCOUNT:0123456789}
   webhook-secret: ${SEPAY_WEBHOOK_SECRET:}
 
 cloudinary:

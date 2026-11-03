@@ -13,6 +13,7 @@ import com.ecommerce.repository.OrderRepository;
 import com.ecommerce.repository.ProductRepository;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.service.OrderService;
+import com.ecommerce.service.SePayService;
 import com.mongodb.MongoException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,8 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -48,6 +47,7 @@ public class OrderServiceImpl implements OrderService {
     private final UserRepository userRepository;
     private final MongoTemplate mongoTemplate;
     private final AppProperties appProperties;
+    private final SePayService sePayService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Autowired(required = false)
@@ -304,21 +304,14 @@ public class OrderServiceImpl implements OrderService {
         String transferContent = null;
 
         if (order.getPaymentMethod() == PaymentMethod.SEPAY || order.getPaymentMethod() == PaymentMethod.BANKING) {
-            if (appProperties != null && appProperties.getSepay() != null) {
-                bank = appProperties.getSepay().getBankName();
-                accNumber = appProperties.getSepay().getAccountNumber();
-                holder = appProperties.getSepay().getAccountHolder();
-                transferContent = order.getOrderCode();
+            bank = sePayService != null ? sePayService.getBankId() : null;
+            accNumber = sePayService != null ? sePayService.getBankAccount() : null;
+            holder = appProperties != null && appProperties.getSepay() != null ? appProperties.getSepay().getAccountHolder() : null;
+            transferContent = order.getOrderCode();
 
-                String encodedContent = URLEncoder.encode(transferContent, StandardCharsets.UTF_8);
-                qrImageUrl = String.format(
-                        "https://qr.sepay.vn/img?acc=%s&bank=%s&amount=%s&des=%s&template=%s",
-                        accNumber != null ? accNumber : "",
-                        bank != null ? bank : "",
-                        order.getFinalAmount() != null ? order.getFinalAmount().toBigInteger().toString() : "0",
-                        encodedContent,
-                        appProperties.getSepay().getQrTemplate() != null ? appProperties.getSepay().getQrTemplate() : "compact"
-                );
+            long amount = order.getFinalAmount() != null ? order.getFinalAmount().longValue() : 0L;
+            if (sePayService != null) {
+                qrImageUrl = sePayService.buildQrUrl(amount, transferContent);
             }
         }
 

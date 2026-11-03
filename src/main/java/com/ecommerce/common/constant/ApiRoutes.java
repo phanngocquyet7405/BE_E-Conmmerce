@@ -71,7 +71,6 @@ public final class ApiRoutes {
     public static final class Payment {
         private Payment() {}
         public static final String BASE = API_V1 + "/payment";
-        public static final String SEPAY_WEBHOOK = "/sepay/webhook";
         public static final String SEPAY_QR_INFO = "/sepay/qr-info/{orderId}";
         public static final String STATUS = "/status/{orderId}";
     }

@@ -51,6 +51,9 @@ class OrderServiceTest {
     @Mock
     private MongoTemplate mongoTemplate;
 
+    @Mock
+    private SePayService sePayService;
+
     @InjectMocks
     private OrderServiceImpl orderService;
 

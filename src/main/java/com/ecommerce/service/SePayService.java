@@ -1,5 +1,6 @@
 package com.ecommerce.service;
 
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,14 +10,15 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
 @Slf4j
+@Getter
 @Service
 @RequiredArgsConstructor
 public class SePayService {
 
-    @Value("${sepay.bank-id:}")
+    @Value("${sepay.bank-id:MBBank}")
     private String bankId;
 
-    @Value("${sepay.bank-account:}")
+    @Value("${sepay.bank-account:0123456789}")
     private String bankAccount;
 
     /**
