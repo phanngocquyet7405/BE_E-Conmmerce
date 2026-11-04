@@ -1,6 +1,7 @@
 package com.ecommerce.controller;
 
 import com.ecommerce.document.Order;
+import com.ecommerce.document.OrderStatus;
 import com.ecommerce.document.PaymentMethod;
 import com.ecommerce.document.PaymentStatus;
 import com.ecommerce.document.SePayTransaction;
@@ -220,5 +221,143 @@ class SePayWebhookControllerTest {
 
         String qrUrl = sePayService.buildQrUrl(50000L, "BETES12345678");
         assertEquals("https://qr.sepay.vn/img?acc=MBBank-0123456789&template=compact&amount=50000&des=BETES12345678", qrUrl);
+    }
+
+    @Test
+    @DisplayName("b2. Timestamp không phải số -> 401")
+    void handleWebhook_NonNumericTimestamp_Returns401() {
+        ResponseEntity<Map<String, Object>> res = controller.handleWebhook("{}", "sha256=dummy", "not-a-number");
+        assertEquals(HttpStatus.UNAUTHORIZED, res.getStatusCode());
+        assertEquals("Invalid timestamp", res.getBody().get("message"));
+    }
+
+    @Test
+    @DisplayName("g2. Mã đơn chữ thường trong content (betes12345678) -> chuẩn hóa uppercase và cập nhật thành công")
+    void handleWebhook_LowercaseOrderCodeInContent_MatchesAndUpdatesOrder() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String rawBody = "{\"id\":92705,\"gateway\":\"Vietcombank\",\"transactionDate\":\"2024-07-02 11:08:33\",\"accountNumber\":\"1017588888\",\"subAccount\":\"\",\"code\":null,\"content\":\"chuyen tien betes12345678 ung ho\",\"transferType\":\"in\",\"transferAmount\":50000}";
+        String sig = calculateSignature(secret, String.valueOf(now), rawBody);
+
+        Order order = Order.builder()
+                .orderCode("BETES12345678")
+                .paymentMethod(PaymentMethod.SEPAY)
+                .paymentStatus(PaymentStatus.UNPAID)
+                .status(OrderStatus.PENDING)
+                .finalAmount(BigDecimal.valueOf(50000))
+                .build();
+
+        when(sePayTransactionRepository.existsBySepayId(92705L)).thenReturn(false);
+        when(sePayTransactionRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(orderRepository.findByOrderCode("BETES12345678")).thenReturn(Optional.of(order));
+
+        UpdateResult updateResult = mock(UpdateResult.class);
+        when(updateResult.getModifiedCount()).thenReturn(1L);
+        when(mongoTemplate.updateFirst(any(Query.class), any(Update.class), eq(Order.class))).thenReturn(updateResult);
+
+        ResponseEntity<Map<String, Object>> res = controller.handleWebhook(rawBody, sig, String.valueOf(now));
+
+        assertEquals(HttpStatus.OK, res.getStatusCode());
+        assertEquals(true, res.getBody().get("success"));
+        verify(mongoTemplate, times(1)).updateFirst(any(Query.class), any(Update.class), eq(Order.class));
+    }
+
+    @Test
+    @DisplayName("g3. TransferType là 'out' (tiền ra) -> lưu transaction nhưng không cập nhật đơn hàng")
+    void handleWebhook_TransferOut_DoesNotUpdateOrder() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String rawBody = "{\"id\":92706,\"gateway\":\"Vietcombank\",\"transactionDate\":\"2024-07-02 11:08:33\",\"accountNumber\":\"1017588888\",\"code\":\"BETES12345678\",\"transferType\":\"out\",\"transferAmount\":50000}";
+        String sig = calculateSignature(secret, String.valueOf(now), rawBody);
+
+        when(sePayTransactionRepository.existsBySepayId(92706L)).thenReturn(false);
+        when(sePayTransactionRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        ResponseEntity<Map<String, Object>> res = controller.handleWebhook(rawBody, sig, String.valueOf(now));
+
+        assertEquals(HttpStatus.OK, res.getStatusCode());
+        assertEquals(true, res.getBody().get("success"));
+        verify(orderRepository, never()).findByOrderCode(any());
+        verify(mongoTemplate, never()).updateFirst(any(), any(), eq(Order.class));
+    }
+
+    @Test
+    @DisplayName("g4. Khách chuyển thiếu tiền (partial payment) -> không cập nhật đơn hàng sang PAID")
+    void handleWebhook_PartialPayment_DoesNotUpdateOrder() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String rawBody = "{\"id\":92707,\"gateway\":\"Vietcombank\",\"transactionDate\":\"2024-07-02 11:08:33\",\"accountNumber\":\"1017588888\",\"code\":\"BETES12345678\",\"transferType\":\"in\",\"transferAmount\":40000}";
+        String sig = calculateSignature(secret, String.valueOf(now), rawBody);
+
+        Order order = Order.builder()
+                .orderCode("BETES12345678")
+                .paymentMethod(PaymentMethod.SEPAY)
+                .paymentStatus(PaymentStatus.UNPAID)
+                .status(OrderStatus.PENDING)
+                .finalAmount(BigDecimal.valueOf(50000))
+                .build();
+
+        when(sePayTransactionRepository.existsBySepayId(92707L)).thenReturn(false);
+        when(sePayTransactionRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(orderRepository.findByOrderCode("BETES12345678")).thenReturn(Optional.of(order));
+
+        ResponseEntity<Map<String, Object>> res = controller.handleWebhook(rawBody, sig, String.valueOf(now));
+
+        assertEquals(HttpStatus.OK, res.getStatusCode());
+        assertEquals(true, res.getBody().get("success"));
+        verify(mongoTemplate, never()).updateFirst(any(), any(), eq(Order.class));
+    }
+
+    @Test
+    @DisplayName("g5. Đơn hàng đã ở trạng thái CANCELLED -> không tự động un-cancel sang CONFIRMED")
+    void handleWebhook_CancelledOrder_DoesNotUpdateOrder() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String rawBody = "{\"id\":92708,\"gateway\":\"Vietcombank\",\"transactionDate\":\"2024-07-02 11:08:33\",\"accountNumber\":\"1017588888\",\"code\":\"BETES12345678\",\"transferType\":\"in\",\"transferAmount\":50000}";
+        String sig = calculateSignature(secret, String.valueOf(now), rawBody);
+
+        Order order = Order.builder()
+                .orderCode("BETES12345678")
+                .paymentMethod(PaymentMethod.SEPAY)
+                .paymentStatus(PaymentStatus.UNPAID)
+                .status(OrderStatus.CANCELLED)
+                .finalAmount(BigDecimal.valueOf(50000))
+                .build();
+
+        when(sePayTransactionRepository.existsBySepayId(92708L)).thenReturn(false);
+        when(sePayTransactionRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(orderRepository.findByOrderCode("BETES12345678")).thenReturn(Optional.of(order));
+
+        ResponseEntity<Map<String, Object>> res = controller.handleWebhook(rawBody, sig, String.valueOf(now));
+
+        assertEquals(HttpStatus.OK, res.getStatusCode());
+        assertEquals(true, res.getBody().get("success"));
+        verify(mongoTemplate, never()).updateFirst(any(), any(), eq(Order.class));
+    }
+
+    @Test
+    @DisplayName("g6. Phương thức BANKING chuyển khoản qua VietQR SePay -> cập nhật PAID và CONFIRMED")
+    void handleWebhook_BankingMethod_UpdatesOrderToPaid() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String rawBody = "{\"id\":92709,\"gateway\":\"Vietcombank\",\"transactionDate\":\"2024-07-02 11:08:33\",\"accountNumber\":\"1017588888\",\"code\":\"BETES12345678\",\"transferType\":\"in\",\"transferAmount\":60000}";
+        String sig = calculateSignature(secret, String.valueOf(now), rawBody);
+
+        Order order = Order.builder()
+                .orderCode("BETES12345678")
+                .paymentMethod(PaymentMethod.BANKING)
+                .paymentStatus(PaymentStatus.UNPAID)
+                .status(OrderStatus.PENDING)
+                .finalAmount(BigDecimal.valueOf(50000))
+                .build();
+
+        when(sePayTransactionRepository.existsBySepayId(92709L)).thenReturn(false);
+        when(sePayTransactionRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(orderRepository.findByOrderCode("BETES12345678")).thenReturn(Optional.of(order));
+
+        UpdateResult updateResult = mock(UpdateResult.class);
+        when(updateResult.getModifiedCount()).thenReturn(1L);
+        when(mongoTemplate.updateFirst(any(Query.class), any(Update.class), eq(Order.class))).thenReturn(updateResult);
+
+        ResponseEntity<Map<String, Object>> res = controller.handleWebhook(rawBody, sig, String.valueOf(now));
+
+        assertEquals(HttpStatus.OK, res.getStatusCode());
+        assertEquals(true, res.getBody().get("success"));
+        verify(mongoTemplate, times(1)).updateFirst(any(Query.class), any(Update.class), eq(Order.class));
     }
 }

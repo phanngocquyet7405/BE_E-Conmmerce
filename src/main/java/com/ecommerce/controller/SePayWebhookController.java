@@ -175,14 +175,16 @@ public class SePayWebhookController {
                 }
 
                 if (StringUtils.hasText(orderCode)) {
+                    orderCode = orderCode.trim().toUpperCase();
                     Optional<Order> orderOpt = orderRepository.findByOrderCode(orderCode);
                     if (orderOpt.isPresent()) {
                         Order order = orderOpt.get();
                         BigDecimal paidAmount = BigDecimal.valueOf(transferAmount);
 
-                        // Điều kiện: paymentMethod == SEPAY, paymentStatus == UNPAID, transferAmount >= finalAmount
-                        if (order.getPaymentMethod() == PaymentMethod.SEPAY
+                        // Điều kiện: phương thức SEPAY hoặc BANKING, paymentStatus == UNPAID, đơn chưa bị hủy, transferAmount >= finalAmount
+                        if ((order.getPaymentMethod() == PaymentMethod.SEPAY || order.getPaymentMethod() == PaymentMethod.BANKING)
                                 && order.getPaymentStatus() == PaymentStatus.UNPAID
+                                && order.getStatus() != OrderStatus.CANCELLED
                                 && paidAmount.compareTo(order.getFinalAmount()) >= 0) {
 
                             // Cập nhật nguyên tử (điều kiện paymentStatus == UNPAID) để tránh trả hai lần
