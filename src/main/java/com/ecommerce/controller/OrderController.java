@@ -4,8 +4,12 @@ import com.ecommerce.common.constant.ApiRoutes;
 import com.ecommerce.common.response.ApiResponse;
 import com.ecommerce.common.response.PageResponse;
 import com.ecommerce.document.OrderStatus;
+import com.ecommerce.document.PaymentMethod;
+import com.ecommerce.document.PaymentStatus;
+import com.ecommerce.dto.request.AdminOrderCriteria;
 import com.ecommerce.dto.request.CheckoutRequest;
 import com.ecommerce.dto.request.UpdateOrderStatusRequest;
+import com.ecommerce.dto.response.AdminOrderDetailResponse;
 import com.ecommerce.dto.response.OrderResponse;
 import com.ecommerce.security.CustomUserDetails;
 import com.ecommerce.service.OrderService;
@@ -18,6 +22,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.Instant;
 
 @RestController
 @RequiredArgsConstructor
@@ -62,17 +68,43 @@ public class OrderController {
         return ResponseEntity.ok(ApiResponse.ok("Hủy đơn hàng thành công", orderService.cancelOrder(userDetails.getId(), id)));
     }
 
-    // 5. ADMIN: Xem danh sách toàn bộ đơn hàng của cửa hàng (có lọc theo trạng thái)
+    // 5. ADMIN: Xem danh sách toàn bộ đơn hàng của cửa hàng (có lọc nâng cao và phân trang)
     @GetMapping(ApiRoutes.Orders.ADMIN_BASE)
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> getAllOrdersForAdmin(
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) OrderStatus status,
+            @RequestParam(required = false) PaymentStatus paymentStatus,
+            @RequestParam(required = false) PaymentMethod paymentMethod,
+            @RequestParam(required = false) Instant from,
+            @RequestParam(required = false) Instant to,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "15") int size) {
-        int validatedPage = Math.max(page, 0);
-        int validatedSize = Math.min(Math.max(size, 1), 50);
-        Pageable pageable = PageRequest.of(validatedPage, validatedSize);
-        return ResponseEntity.ok(ApiResponse.ok(orderService.getAllOrdersForAdmin(status, pageable)));
+            @RequestParam(defaultValue = "15") int size,
+            @RequestParam(defaultValue = "createdAt") String sortBy,
+            @RequestParam(defaultValue = "desc") String sortDir) {
+
+        AdminOrderCriteria criteria = AdminOrderCriteria.builder()
+                .keyword(keyword)
+                .status(status)
+                .paymentStatus(paymentStatus)
+                .paymentMethod(paymentMethod)
+                .from(from)
+                .to(to)
+                .page(page)
+                .size(size)
+                .sortBy(sortBy)
+                .sortDir(sortDir)
+                .build();
+
+        return ResponseEntity.ok(ApiResponse.ok(orderService.getOrdersForAdmin(criteria)));
+    }
+
+    // 5b. ADMIN: Xem chi tiết 1 đơn hàng (kèm lịch sử giao dịch SePay liên quan)
+    @GetMapping(ApiRoutes.Orders.ADMIN_BASE + ApiRoutes.Orders.BY_ID)
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<AdminOrderDetailResponse>> getOrderDetailForAdmin(@PathVariable String id) {
+        return ResponseEntity.ok(ApiResponse.ok("Lấy chi tiết đơn hàng thành công",
+                orderService.getOrderDetailForAdmin(id)));
     }
 
     // 6. ADMIN: Cập nhật trạng thái đơn hàng (CONFIRMED, SHIPPING, DELIVERED, CANCELLED)

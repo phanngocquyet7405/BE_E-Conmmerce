@@ -54,6 +54,9 @@ class OrderServiceTest {
     @Mock
     private SePayService sePayService;
 
+    @Mock
+    private com.ecommerce.repository.SePayTransactionRepository sePayTransactionRepository;
+
     @InjectMocks
     private OrderServiceImpl orderService;
 

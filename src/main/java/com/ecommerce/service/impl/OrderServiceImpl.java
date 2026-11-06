@@ -2,14 +2,18 @@ package com.ecommerce.service.impl;
 
 import com.ecommerce.common.response.PageResponse;
 import com.ecommerce.document.*;
+import com.ecommerce.dto.request.AdminOrderCriteria;
 import com.ecommerce.dto.request.CheckoutRequest;
 import com.ecommerce.dto.request.UpdateOrderStatusRequest;
+import com.ecommerce.dto.response.AdminOrderDetailResponse;
 import com.ecommerce.dto.response.OrderResponse;
+import com.ecommerce.dto.response.SePayTransactionResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.repository.CartRepository;
 import com.ecommerce.repository.OrderRepository;
 import com.ecommerce.repository.ProductRepository;
+import com.ecommerce.repository.SePayTransactionRepository;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.service.OrderService;
 import com.ecommerce.service.SePayService;
@@ -19,7 +23,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -37,6 +43,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -47,6 +54,7 @@ public class OrderServiceImpl implements OrderService {
     private final CartRepository cartRepository;
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
+    private final SePayTransactionRepository sePayTransactionRepository;
     private final MongoTemplate mongoTemplate;
     private final SePayService sePayService;
     private final SecureRandom secureRandom = new SecureRandom();
@@ -291,6 +299,91 @@ public class OrderServiceImpl implements OrderService {
                 ? orderRepository.findByStatusOrderByCreatedAtDesc(status, pageable)
                 : orderRepository.findAll(pageable);
         return PageResponse.fromPage(orderPage.map(this::mapToOrderResponse));
+    }
+
+    @Override
+    public PageResponse<OrderResponse> getOrdersForAdmin(AdminOrderCriteria criteria) {
+        if (criteria == null) {
+            criteria = AdminOrderCriteria.builder().build();
+        }
+
+        int page = Math.max(criteria.getPage(), 0);
+        int size = Math.min(Math.max(criteria.getSize(), 1), 50);
+
+        String sortBy = validateSortBy(criteria.getSortBy());
+        Sort.Direction direction = "asc".equalsIgnoreCase(criteria.getSortDir())
+                ? Sort.Direction.ASC
+                : Sort.Direction.DESC;
+
+        Query query = new Query();
+
+        if (criteria.getStatus() != null) {
+            query.addCriteria(Criteria.where("status").is(criteria.getStatus()));
+        }
+
+        if (criteria.getPaymentStatus() != null) {
+            query.addCriteria(Criteria.where("paymentStatus").is(criteria.getPaymentStatus()));
+        }
+
+        if (criteria.getPaymentMethod() != null) {
+            query.addCriteria(Criteria.where("paymentMethod").is(criteria.getPaymentMethod()));
+        }
+
+        if (criteria.getFrom() != null && criteria.getTo() != null) {
+            query.addCriteria(Criteria.where("createdAt").gte(criteria.getFrom()).lte(criteria.getTo()));
+        } else if (criteria.getFrom() != null) {
+            query.addCriteria(Criteria.where("createdAt").gte(criteria.getFrom()));
+        } else if (criteria.getTo() != null) {
+            query.addCriteria(Criteria.where("createdAt").lte(criteria.getTo()));
+        }
+
+        if (criteria.getKeyword() != null && !criteria.getKeyword().trim().isEmpty()) {
+            String pattern = Pattern.quote(criteria.getKeyword().trim());
+            query.addCriteria(new Criteria().orOperator(
+                    Criteria.where("orderCode").regex(pattern, "i"),
+                    Criteria.where("customerPhone").regex(pattern, "i"),
+                    Criteria.where("customerEmail").regex(pattern, "i")
+            ));
+        }
+
+        long total = mongoTemplate.count(query, Order.class);
+
+        query.with(PageRequest.of(page, size, Sort.by(direction, sortBy)));
+        List<Order> orders = mongoTemplate.find(query, Order.class);
+
+        List<OrderResponse> content = orders.stream()
+                .map(this::mapToOrderResponse)
+                .toList();
+
+        Page<OrderResponse> pageResult = new org.springframework.data.domain.PageImpl<>(
+                content, PageRequest.of(page, size), total);
+        return PageResponse.fromPage(pageResult);
+    }
+
+    private String validateSortBy(String sortBy) {
+        if (sortBy == null) return "createdAt";
+        return switch (sortBy) {
+            case "createdAt", "finalAmount", "totalAmount", "status", "paymentStatus" -> sortBy;
+            default -> "createdAt";
+        };
+    }
+
+    @Override
+    public AdminOrderDetailResponse getOrderDetailForAdmin(String orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+        List<SePayTransaction> transactions = sePayTransactionRepository
+                .findByOrderCodeOrderByCreatedAtDesc(order.getOrderCode());
+
+        List<SePayTransactionResponse> txResponses = transactions.stream()
+                .map(SePayTransactionResponse::fromEntity)
+                .toList();
+
+        return AdminOrderDetailResponse.builder()
+                .order(mapToOrderResponse(order))
+                .transactions(txResponses)
+                .build();
     }
 
     @Override

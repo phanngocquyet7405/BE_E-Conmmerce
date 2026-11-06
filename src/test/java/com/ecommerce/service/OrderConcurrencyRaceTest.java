@@ -90,6 +90,7 @@ class OrderConcurrencyRaceTest {
                 cartRepository,
                 productRepository,
                 userRepository,
+                sePayTransactionRepository,
                 mongoTemplate,
                 sePayService
         );

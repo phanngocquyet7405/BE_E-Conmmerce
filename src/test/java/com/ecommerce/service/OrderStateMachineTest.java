@@ -50,6 +50,9 @@ class OrderStateMachineTest {
     @Mock
     private SePayService sePayService;
 
+    @Mock
+    private com.ecommerce.repository.SePayTransactionRepository sePayTransactionRepository;
+
     private OrderServiceImpl orderService;
 
     @BeforeEach
@@ -59,6 +62,7 @@ class OrderStateMachineTest {
                 cartRepository,
                 productRepository,
                 userRepository,
+                sePayTransactionRepository,
                 mongoTemplate,
                 sePayService
         );

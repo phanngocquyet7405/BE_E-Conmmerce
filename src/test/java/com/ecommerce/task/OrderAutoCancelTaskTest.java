@@ -60,6 +60,9 @@ class OrderAutoCancelTaskTest {
     @Mock
     private SePayService sePayService;
 
+    @Mock
+    private com.ecommerce.repository.SePayTransactionRepository sePayTransactionRepository;
+
     private OrderAutoCancelTask autoCancelTask;
     private OrderServiceImpl orderServiceImpl;
 
@@ -73,6 +76,7 @@ class OrderAutoCancelTaskTest {
                 cartRepository,
                 productRepository,
                 userRepository,
+                sePayTransactionRepository,
                 mongoTemplate,
                 sePayService
         );
