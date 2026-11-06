@@ -82,4 +82,13 @@ public final class ApiRoutes {
         public static final String UPLOAD = "/upload";
         public static final String UPLOAD_MULTIPLE = "/upload-multiple";
     }
+
+    public static final class Statistics {
+        private Statistics() {}
+        public static final String ADMIN_BASE = API_V1 + "/admin/statistics";
+        public static final String OVERVIEW = "/overview";
+        public static final String REVENUE = "/revenue";
+        public static final String TOP_PRODUCTS = "/top-products";
+        public static final String LOW_STOCK = "/low-stock";
+    }
 }
