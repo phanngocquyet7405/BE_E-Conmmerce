@@ -14,5 +14,6 @@ public interface OrderService {
     OrderResponse cancelOrder(String userId, String orderId);
     PageResponse<OrderResponse> getAllOrdersForAdmin(OrderStatus status, Pageable pageable);
     OrderResponse updateOrderStatus(String orderId, UpdateOrderStatusRequest request);
+    OrderResponse confirmRefund(String orderId);
     int cancelExpiredOrders(int timeoutMinutes);
 }

@@ -260,6 +260,7 @@ public class OrderServiceImpl implements OrderService {
 
         Update update = new Update()
                 .set("status", OrderStatus.CANCELLED)
+                .set("stockRestored", true)
                 .set("updatedAt", Instant.now());
 
         Order cancelledOrder = mongoTemplate.findAndModify(query, update,
@@ -301,25 +302,113 @@ public class OrderServiceImpl implements OrderService {
         OrderStatus current = order.getStatus();
         OrderStatus next = request.getStatus();
 
+        if (current == next) {
+            return mapToOrderResponse(order);
+        }
+
+        // 1. Kiểm tra trạng thái kết thúc
         if (current == OrderStatus.DELIVERED || current == OrderStatus.CANCELLED) {
             throw new AppException(ErrorCode.INVALID_ORDER_STATUS_TRANSITION,
-                    "Đơn hàng đã kết thúc (Đã giao hoặc Đã hủy), không thể chuyển trạng thái tiếp");
+                    "Đơn hàng đã kết thúc (" + current + "), không thể thay đổi trạng thái.");
+        }
+
+        // 2. Kiểm tra tính hợp lệ của luồng chuyển trạng thái
+        // Hợp lệ: PENDING -> CONFIRMED -> SHIPPING -> DELIVERED
+        // Hợp lệ: PENDING / CONFIRMED -> CANCELLED (hoặc AWAITING_REFUND nếu đã thanh toán)
+        // Hợp lệ: AWAITING_REFUND -> CANCELLED (xác nhận hoàn tiền)
+        boolean validTransition = false;
+        switch (current) {
+            case PENDING -> {
+                if (next == OrderStatus.CONFIRMED || next == OrderStatus.CANCELLED) {
+                    validTransition = true;
+                }
+            }
+            case CONFIRMED -> {
+                if (next == OrderStatus.SHIPPING || next == OrderStatus.CANCELLED) {
+                    validTransition = true;
+                }
+            }
+            case SHIPPING -> {
+                if (next == OrderStatus.DELIVERED) {
+                    validTransition = true;
+                }
+            }
+            case AWAITING_REFUND -> {
+                if (next == OrderStatus.CANCELLED) {
+                    validTransition = true;
+                }
+            }
+            default -> validTransition = false;
+        }
+
+        if (!validTransition) {
+            throw new AppException(ErrorCode.INVALID_ORDER_STATUS_TRANSITION,
+                    "Không thể chuyển trạng thái đơn hàng từ " + current + " sang " + next);
+        }
+
+        // 3. Theo D4: Chặn chuyển sang SHIPPING nếu đơn là SEPAY hoặc BANKING mà chưa PAID
+        if (next == OrderStatus.SHIPPING) {
+            if (order.getPaymentMethod() != PaymentMethod.COD && order.getPaymentStatus() != PaymentStatus.PAID) {
+                log.warn("Chặn giao hàng đơn {}: Phương thức {} chưa thanh toán (Trạng thái: {})",
+                        order.getOrderCode(), order.getPaymentMethod(), order.getPaymentStatus());
+                throw new AppException(ErrorCode.PAYMENT_REQUIRED_BEFORE_SHIPPING,
+                        "Đơn hàng " + order.getOrderCode() + " chưa thanh toán thành công (PAID), không thể chuyển sang giao hàng.");
+            }
+        }
+
+        // 4. Chuyển sang DELIVERED: Nếu là COD thì tự động ghi nhận thanh toán thành công
+        if (next == OrderStatus.DELIVERED) {
+            if (order.getPaymentMethod() == PaymentMethod.COD) {
+                order.setPaymentStatus(PaymentStatus.PAID);
+                order.setPaidAt(Instant.now());
+                order.setPaidAmount(order.getFinalAmount());
+            }
+        }
+
+        // 5. Theo D7: Hủy đơn hàng
+        if (next == OrderStatus.CANCELLED) {
+            if (order.getPaymentStatus() == PaymentStatus.PAID) {
+                // Đơn đã thanh toán: Chuyển sang AWAITING_REFUND để chờ admin hoàn tiền thủ công
+                order.setStatus(OrderStatus.AWAITING_REFUND);
+                restoreProductStockIdempotent(order);
+                order.setUpdatedAt(Instant.now());
+                Order saved = orderRepository.save(order);
+                log.info("Admin yêu cầu hủy đơn đã PAID {}. Đơn chuyển sang AWAITING_REFUND và đã hoàn kho.", order.getOrderCode());
+                return mapToOrderResponse(saved);
+            } else {
+                restoreProductStockIdempotent(order);
+            }
         }
 
         order.setStatus(next);
+        order.setUpdatedAt(Instant.now());
+        Order saved = orderRepository.save(order);
+        log.info("Admin cập nhật trạng thái đơn {} từ {} sang {}", order.getOrderCode(), current, next);
+        return mapToOrderResponse(saved);
+    }
 
-        // Nếu COD giao thành công thì tự động chuyển paymentStatus sang PAID
-        if (next == OrderStatus.DELIVERED && order.getPaymentMethod() == PaymentMethod.COD) {
-            order.setPaymentStatus(PaymentStatus.PAID);
-            order.setPaidAt(Instant.now());
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public OrderResponse confirmRefund(String orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+        if (order.getStatus() != OrderStatus.AWAITING_REFUND && order.getPaymentStatus() != PaymentStatus.PAID) {
+            throw new AppException(ErrorCode.INVALID_ORDER_STATUS_TRANSITION,
+                    "Chỉ có thể xác nhận hoàn tiền cho đơn hàng ở trạng thái AWAITING_REFUND hoặc đã thanh toán (PAID).");
         }
 
-        if (next == OrderStatus.CANCELLED) {
-            restoreProductStock(order.getItems());
+        if (order.getPaymentStatus() == PaymentStatus.REFUNDED) {
+            throw new AppException(ErrorCode.ORDER_ALREADY_REFUNDED);
         }
+
+        order.setStatus(OrderStatus.CANCELLED);
+        order.setPaymentStatus(PaymentStatus.REFUNDED);
+        order.setUpdatedAt(Instant.now());
+        restoreProductStockIdempotent(order);
 
         Order saved = orderRepository.save(order);
-        log.info("Admin cập trạng thái đơn {} từ {} sang {}", order.getOrderCode(), current, next);
+        log.info("Admin đã xác nhận hoàn tiền thủ công cho đơn hàng: {}", order.getOrderCode());
         return mapToOrderResponse(saved);
     }
 
@@ -349,19 +438,29 @@ public class OrderServiceImpl implements OrderService {
                     .and("paymentStatus").is(PaymentStatus.UNPAID));
             Update update = new Update()
                     .set("status", OrderStatus.CANCELLED)
+                    .set("stockRestored", true)
                     .set("updatedAt", Instant.now());
 
             Order cancelled = mongoTemplate.findAndModify(atomicQuery, update,
                     FindAndModifyOptions.options().returnNew(true), Order.class);
 
             if (cancelled != null) {
-                restoreProductStock(cancelled.getItems());
+                restoreProductStockIdempotent(cancelled);
                 count++;
                 log.info("Tự động hủy đơn hàng quá hạn thanh toán: {} (tạo lúc {})",
                         cancelled.getOrderCode(), cancelled.getCreatedAt());
             }
         }
         return count;
+    }
+
+    private void restoreProductStockIdempotent(Order order) {
+        if (Boolean.TRUE.equals(order.getStockRestored())) {
+            log.info("Tồn kho của đơn hàng {} đã được hoàn trả trước đó, bỏ qua để bảo đảm tính idempotent.", order.getOrderCode());
+            return;
+        }
+        restoreProductStock(order.getItems());
+        order.setStockRestored(true);
     }
 
     private void restoreProductStock(List<OrderItem> items) {

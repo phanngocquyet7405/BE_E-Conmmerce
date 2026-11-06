@@ -76,12 +76,20 @@ public class OrderController {
     }
 
     // 6. ADMIN: Cập nhật trạng thái đơn hàng (CONFIRMED, SHIPPING, DELIVERED, CANCELLED)
-    @PutMapping(ApiRoutes.Orders.ADMIN_BASE + ApiRoutes.Orders.UPDATE_STATUS)
+    @RequestMapping(value = ApiRoutes.Orders.ADMIN_BASE + ApiRoutes.Orders.UPDATE_STATUS, method = {RequestMethod.PUT, RequestMethod.PATCH})
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<OrderResponse>> updateOrderStatus(
             @PathVariable String id,
             @Valid @RequestBody UpdateOrderStatusRequest request) {
         return ResponseEntity.ok(ApiResponse.ok("Cập nhật trạng thái đơn hàng thành công",
                 orderService.updateOrderStatus(id, request)));
+    }
+
+    // 7. ADMIN: Xác nhận đã hoàn tiền thủ công cho đơn hàng AWAITING_REFUND (Theo D7)
+    @PatchMapping(ApiRoutes.Orders.ADMIN_BASE + "/{id}/confirm-refund")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<OrderResponse>> confirmRefund(@PathVariable String id) {
+        return ResponseEntity.ok(ApiResponse.ok("Xác nhận hoàn tiền cho đơn hàng thành công",
+                orderService.confirmRefund(id)));
     }
 }
