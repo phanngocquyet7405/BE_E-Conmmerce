@@ -46,7 +46,7 @@ public class SePayWebhookServiceImpl implements SePayWebhookService {
     private static final long MAX_ALLOWED_SKEW_SECONDS = 300L; // 5 phút chống Replay Attack
 
     @Override
-    public WebhookResult processWebhook(String authorization, String signature, String timestampHeader, String rawBody) {
+    public WebhookResult processWebhook(String rawBody, String authorization, String signature, String timestampHeader) {
         log.info("Nhận request SePay Webhook. Headers: auth={}, sig={}, ts={}",
                 authorization != null ? "Present" : "Null",
                 signature != null ? "Present" : "Null",

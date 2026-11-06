@@ -225,7 +225,7 @@ class OrderConcurrencyRaceTest {
         when(mongoTemplate.updateFirst(any(Query.class), any(Update.class), eq(Order.class)))
                 .thenReturn(zeroResult);
 
-        WebhookResult result = sePayWebhookService.processWebhook("Apikey test-api-key", null, null, rawBody);
+        WebhookResult result = sePayWebhookService.processWebhook(rawBody, "Apikey test-api-key", null, null);
 
         assertNotNull(result);
         assertTrue(result.success());

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -108,17 +109,28 @@ class OrderAutoCancelTaskTest {
                 .createdAt(Instant.now().minus(20, ChronoUnit.MINUTES))
                 .build();
 
+        Order cancelledOrder = Order.builder()
+                .id("order-expired-1")
+                .orderCode("BETES99999999")
+                .userId("user-1")
+                .status(OrderStatus.CANCELLED)
+                .paymentStatus(PaymentStatus.UNPAID)
+                .paymentMethod(PaymentMethod.SEPAY)
+                .items(List.of(item))
+                .createdAt(expiredOrder.getCreatedAt())
+                .build();
+
         when(mongoTemplate.find(any(Query.class), eq(Order.class)))
                 .thenReturn(List.of(expiredOrder));
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class), any(FindAndModifyOptions.class), eq(Order.class)))
+                .thenReturn(cancelledOrder);
 
         int cancelled = orderServiceImpl.cancelExpiredOrders(15);
 
         assertEquals(1, cancelled);
-        assertEquals(OrderStatus.CANCELLED, expiredOrder.getStatus());
 
         // Kiểm tra hoàn kho cho prod-1 với số lượng 3
         verify(mongoTemplate, times(1)).updateFirst(any(Query.class), any(Update.class), eq(Product.class));
-        verify(orderRepository, times(1)).save(expiredOrder);
     }
 
     @Test
