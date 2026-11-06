@@ -103,74 +103,90 @@ public class OrderServiceImpl implements OrderService {
         }
 
         List<OrderItem> orderItems = new ArrayList<>();
+        List<OrderItem> decrementedItems = new ArrayList<>();
         BigDecimal totalAmount = BigDecimal.ZERO;
 
-        for (CartItem cartItem : cart.getItems()) {
-            // Trừ tồn kho nguyên tử (Atomic Check-and-Set) chống bán vượt tồn kho (Overselling)
-            Query query = new Query(Criteria.where("_id").is(cartItem.getProductId())
-                    .and("stock_quantity").gte(cartItem.getQuantity())
-                    .and("active").is(true));
-            Update update = new Update().inc("stock_quantity", -cartItem.getQuantity());
+        try {
+            for (CartItem cartItem : cart.getItems()) {
+                // Trừ tồn kho nguyên tử (Atomic Check-and-Set) chống bán vượt tồn kho (Overselling)
+                Query query = new Query(Criteria.where("_id").is(cartItem.getProductId())
+                        .and("stock_quantity").gte(cartItem.getQuantity())
+                        .and("active").is(true));
+                Update update = new Update().inc("stock_quantity", -cartItem.getQuantity());
 
-            Product product = mongoTemplate.findAndModify(
-                    query, update, FindAndModifyOptions.options().returnNew(false), Product.class);
+                Product product = mongoTemplate.findAndModify(
+                        query, update, FindAndModifyOptions.options().returnNew(false), Product.class);
 
-            if (product == null) {
-                Product existing = productRepository.findById(cartItem.getProductId()).orElse(null);
-                if (existing == null) {
-                    throw new AppException(ErrorCode.PRODUCT_NOT_FOUND);
+                if (product == null) {
+                    Product existing = productRepository.findById(cartItem.getProductId()).orElse(null);
+                    if (existing == null) {
+                        throw new AppException(ErrorCode.PRODUCT_NOT_FOUND);
+                    }
+                    throw new AppException(ErrorCode.INSUFFICIENT_STOCK,
+                            "Sản phẩm '" + existing.getName() + "' không đủ số lượng trong kho");
                 }
-                throw new AppException(ErrorCode.INSUFFICIENT_STOCK,
-                        "Sản phẩm '" + existing.getName() + "' không đủ số lượng trong kho");
+
+                BigDecimal itemTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
+                totalAmount = totalAmount.add(itemTotal);
+
+                OrderItem orderItem = OrderItem.builder()
+                        .productId(product.getId())
+                        .productName(product.getName())
+                        .sku(product.getSku())
+                        .price(product.getPrice())
+                        .quantity(cartItem.getQuantity())
+                        .thumbnailUrl(product.getThumbnailUrl())
+                        .subTotal(itemTotal)
+                        .build();
+
+                orderItems.add(orderItem);
+                decrementedItems.add(orderItem);
             }
 
-            BigDecimal itemTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
-            totalAmount = totalAmount.add(itemTotal);
+            BigDecimal shippingFee = BigDecimal.valueOf(30000);
+            BigDecimal finalAmount = totalAmount.add(shippingFee);
 
-            orderItems.add(OrderItem.builder()
-                    .productId(product.getId())
-                    .productName(product.getName())
-                    .sku(product.getSku())
-                    .price(product.getPrice())
-                    .quantity(cartItem.getQuantity())
-                    .thumbnailUrl(product.getThumbnailUrl())
-                    .subTotal(itemTotal)
-                    .build());
+            // Sinh mã đơn hàng dạng prefix + 8 số ngẫu nhiên (vd: BETES12345678)
+            String orderCode = generateUniqueOrderCode();
+
+            PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
+
+            Order order = Order.builder()
+                    .orderCode(orderCode)
+                    .userId(userId)
+                    .customerName(user.getFullName())
+                    .customerEmail(user.getEmail())
+                    .customerPhone(user.getPhone())
+                    .shippingAddress(shippingAddress)
+                    .items(orderItems)
+                    .totalAmount(totalAmount)
+                    .shippingFee(shippingFee)
+                    .finalAmount(finalAmount)
+                    .paymentMethod(paymentMethod)
+                    .paymentStatus(PaymentStatus.UNPAID)
+                    .status(OrderStatus.PENDING)
+                    .note(request.getNote())
+                    .build();
+
+            Order savedOrder = orderRepository.save(order);
+
+            // Xóa giỏ hàng sau khi đặt thành công
+            cart.getItems().clear();
+            cartRepository.save(cart);
+
+            log.info("Khách hàng {} đặt thành công đơn hàng: {}, Tổng tiền: {}", userId, orderCode, finalAmount);
+            return mapToOrderResponse(savedOrder);
+
+        } catch (Exception ex) {
+            // Cơ chế bù tồn kho (Compensating Stock Rollback):
+            // Hoàn lại số lượng đã trừ cho các sản phẩm đã trừ thành công trước khi phát sinh lỗi
+            if (!decrementedItems.isEmpty()) {
+                log.warn("Phát sinh lỗi trong quá trình checkout ({}). Đang thực hiện hoàn tồn kho bù cho {} mặt hàng...",
+                        ex.getMessage(), decrementedItems.size());
+                restoreProductStock(decrementedItems);
+            }
+            throw ex;
         }
-
-        BigDecimal shippingFee = BigDecimal.valueOf(30000);
-        BigDecimal finalAmount = totalAmount.add(shippingFee);
-
-        // Sinh mã đơn hàng dạng prefix + 8 số ngẫu nhiên (vd: BETES12345678)
-        String orderCode = generateUniqueOrderCode();
-
-        PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
-
-        Order order = Order.builder()
-                .orderCode(orderCode)
-                .userId(userId)
-                .customerName(user.getFullName())
-                .customerEmail(user.getEmail())
-                .customerPhone(user.getPhone())
-                .shippingAddress(shippingAddress)
-                .items(orderItems)
-                .totalAmount(totalAmount)
-                .shippingFee(shippingFee)
-                .finalAmount(finalAmount)
-                .paymentMethod(paymentMethod)
-                .paymentStatus(PaymentStatus.UNPAID)
-                .status(OrderStatus.PENDING)
-                .note(request.getNote())
-                .build();
-
-        Order savedOrder = orderRepository.save(order);
-
-        // Xóa giỏ hàng sau khi đặt thành công
-        cart.getItems().clear();
-        cartRepository.save(cart);
-
-        log.info("Khách hàng {} đặt thành công đơn hàng: {}, Tổng tiền: {}", userId, orderCode, finalAmount);
-        return mapToOrderResponse(savedOrder);
     }
 
     private boolean isTransientTransactionError(Throwable ex) {
@@ -288,7 +304,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private String generateUniqueOrderCode() {
-        String prefix = (sePayService != null && StringUtils.hasText(sePayService.getOrderCodePrefix()))
+        String prefix = StringUtils.hasText(sePayService.getOrderCodePrefix())
                 ? sePayService.getOrderCodePrefix()
                 : "BETES";
         String code;

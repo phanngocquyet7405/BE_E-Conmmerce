@@ -134,7 +134,7 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("Checkout thất bại khi sản phẩm hết hàng: Ném INSUFFICIENT_STOCK và để Transaction tự rollback")
+    @DisplayName("Checkout thất bại khi sản phẩm hết hàng: Ném INSUFFICIENT_STOCK và thực hiện bù tồn kho (compensating rollback)")
     void checkout_InsufficientStock_RollsBackAndThrowsException() {
         CartItem item1 = CartItem.builder()
                 .productId("prod-1")
@@ -185,8 +185,8 @@ class OrderServiceTest {
 
         assertEquals(ErrorCode.INSUFFICIENT_STOCK, exception.getErrorCode());
 
-        // Đã bỏ bù kho thủ công (vì Transaction tự rollback), không được gọi updateFirst
-        verify(mongoTemplate, never()).updateFirst(any(Query.class), any(Update.class), eq(Product.class));
+        // Cơ chế bù tồn kho (Compensating Rollback): phải gọi updateFirst đúng 1 lần cho prod-1
+        verify(mongoTemplate, times(1)).updateFirst(any(Query.class), any(Update.class), eq(Product.class));
 
         // Đơn hàng KHÔNG được lưu và giỏ hàng KHÔNG bị xóa
         verify(orderRepository, never()).save(any(Order.class));

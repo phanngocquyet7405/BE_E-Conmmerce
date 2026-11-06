@@ -103,16 +103,22 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         List<String> origins = appProperties.getCors().getAllowedOrigins();
+
         if (origins != null && !origins.isEmpty()) {
-            if (origins.contains("*")) {
-                configuration.setAllowedOriginPatterns(List.of("*"));
-            } else {
-                configuration.setAllowedOrigins(origins);
+            List<String> safeOrigins = origins.stream()
+                    .map(String::trim)
+                    .filter(o -> !o.equals("*") && !o.isBlank())
+                    .toList();
+            if (!safeOrigins.isEmpty()) {
+                configuration.setAllowedOrigins(safeOrigins);
             }
         }
+
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "X-Requested-With", "X-SePay-Signature", "X-SePay-Timestamp"));
+        configuration.setExposedHeaders(List.of("Retry-After", "Authorization"));
         configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
