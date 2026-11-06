@@ -33,6 +33,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -287,6 +288,42 @@ public class OrderServiceImpl implements OrderService {
         Order saved = orderRepository.save(order);
         log.info("Admin cập nhật trạng thái đơn {} từ {} sang {}", order.getOrderCode(), current, next);
         return mapToOrderResponse(saved);
+    }
+
+    /**
+     * Tự động quét và hủy các đơn hàng chưa thanh toán đã quá thời hạn timeoutMinutes,
+     * hoàn lại số lượng tồn kho nguyên tử cho từng sản phẩm trong đơn.
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int cancelExpiredOrders(int timeoutMinutes) {
+        Instant cutoff = Instant.now().minus(timeoutMinutes, ChronoUnit.MINUTES);
+
+        Query query = Query.query(Criteria.where("status").is(OrderStatus.PENDING)
+                .and("payment_status").is(PaymentStatus.UNPAID)
+                .and("payment_method").ne(PaymentMethod.COD)
+                .and("created_at").lte(cutoff));
+
+        List<Order> expiredOrders = mongoTemplate.find(query, Order.class);
+
+        if (expiredOrders.isEmpty()) {
+            return 0;
+        }
+
+        int count = 0;
+        for (Order order : expiredOrders) {
+            try {
+                order.setStatus(OrderStatus.CANCELLED);
+                restoreProductStock(order.getItems());
+                orderRepository.save(order);
+                count++;
+                log.info("Tự động hủy đơn hàng quá hạn thanh toán: {} (tạo lúc {})",
+                        order.getOrderCode(), order.getCreatedAt());
+            } catch (Exception ex) {
+                log.error("Không thể tự động hủy đơn hàng {}: {}", order.getOrderCode(), ex.getMessage(), ex);
+            }
+        }
+        return count;
     }
 
     private void restoreProductStock(List<OrderItem> items) {
