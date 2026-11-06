@@ -3,10 +3,10 @@ package com.ecommerce.service.impl;
 import com.ecommerce.config.SePayProperties;
 import com.ecommerce.document.*;
 import com.ecommerce.dto.request.SePayWebhookRequest;
+import com.ecommerce.service.dto.WebhookResult;
 import com.ecommerce.repository.OrderRepository;
 import com.ecommerce.repository.SePayTransactionRepository;
 import com.ecommerce.service.SePayWebhookService;
-import com.ecommerce.service.dto.WebhookResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.result.UpdateResult;
 import lombok.RequiredArgsConstructor;
@@ -42,56 +42,58 @@ public class SePayWebhookServiceImpl implements SePayWebhookService {
     private final ObjectMapper objectMapper;
     private final SePayProperties sePayProperties;
 
+    private static final String HMAC_SHA256 = "HmacSHA256";
+    private static final long MAX_ALLOWED_SKEW_SECONDS = 300L; // 5 phút chống Replay Attack
+
     @Override
-    public WebhookResult processWebhook(String rawBody, String authorization, String signature, String timestampHeader) {
-        // 1. Xác thực danh tính Webhook (API Key hoặc HMAC-SHA256)
+    public WebhookResult processWebhook(String authorization, String signature, String timestampHeader, String rawBody) {
+        log.info("Nhận request SePay Webhook. Headers: auth={}, sig={}, ts={}",
+                authorization != null ? "Present" : "Null",
+                signature != null ? "Present" : "Null",
+                timestampHeader);
+
+        // 1. Xác thực Webhook: Hỗ trợ cả 2 cơ chế (API Key chuẩn SePay hoặc HMAC-SHA256)
         boolean authenticated = false;
 
-        // Cơ chế 1: Xác thực qua Authorization: Apikey <key>
-        if (StringUtils.hasText(authorization)) {
+        // Cơ chế 1: Xác thực qua API Key header Authorization: Apikey <key>
+        if (StringUtils.hasText(authorization) && StringUtils.hasText(sePayProperties.getApiKey())) {
             String trimmedAuth = authorization.trim();
-            String prefix = "apikey ";
-            if (trimmedAuth.toLowerCase().startsWith(prefix)) {
-                String providedApiKey = trimmedAuth.substring(prefix.length()).trim();
-                String configuredApiKey = sePayProperties.getApiKey();
-                String configuredSecret = sePayProperties.getWebhookSecret();
-
-                if (StringUtils.hasText(configuredApiKey) && isConstantTimeEqual(configuredApiKey, providedApiKey)) {
-                    authenticated = true;
-                } else if (StringUtils.hasText(configuredSecret) && isConstantTimeEqual(configuredSecret, providedApiKey)) {
+            String prefix = "Apikey ";
+            if (trimmedAuth.regionMatches(true, 0, prefix, 0, prefix.length())) {
+                String providedKey = trimmedAuth.substring(prefix.length()).trim();
+                if (isConstantTimeEqual(providedKey, sePayProperties.getApiKey().trim())) {
                     authenticated = true;
                 }
             }
         }
 
         // Cơ chế 2: Xác thực qua HMAC-SHA256 (X-SePay-Signature và X-SePay-Timestamp)
-        if (!authenticated && StringUtils.hasText(signature) && StringUtils.hasText(timestampHeader)) {
-            String secret = StringUtils.hasText(sePayProperties.getWebhookSecret())
-                    ? sePayProperties.getWebhookSecret()
-                    : sePayProperties.getApiKey();
+        if (!authenticated && StringUtils.hasText(signature) && StringUtils.hasText(timestampHeader)
+                && StringUtils.hasText(sePayProperties.getWebhookSecret())) {
 
-            if (StringUtils.hasText(secret)) {
-                long timestamp;
+            long timestamp;
+            try {
+                timestamp = Long.parseLong(timestampHeader.trim());
+            } catch (NumberFormatException e) {
+                log.warn("SePay Webhook: X-SePay-Timestamp không hợp lệ: {}", timestampHeader);
+                return WebhookResult.unauthorized("Invalid timestamp header");
+            }
+
+            long currentEpoch = Instant.now().getEpochSecond();
+            if (Math.abs(currentEpoch - timestamp) > MAX_ALLOWED_SKEW_SECONDS) {
+                log.warn("SePay Webhook: Timestamp lệch quá 300 giây (Replay Attack): current={}, request={}",
+                        currentEpoch, timestamp);
+                return WebhookResult.unauthorized("Request expired (Replay protection)");
+            }
+
+            if (rawBody != null) {
                 try {
-                    timestamp = Long.parseLong(timestampHeader.trim());
-                } catch (NumberFormatException e) {
-                    log.warn("SePay Webhook bị từ chối: Timestamp không hợp lệ: {}", timestampHeader);
-                    return WebhookResult.unauthorized("Invalid timestamp");
-                }
-
-                long now = Instant.now().getEpochSecond();
-                if (Math.abs(now - timestamp) > 300) {
-                    log.warn("SePay Webhook bị từ chối: Timestamp lệch quá 300 giây (|{} - {}| > 300).", now, timestamp);
-                    return WebhookResult.unauthorized("Timestamp expired");
-                }
-
-                try {
-                    Mac mac = Mac.getInstance("HmacSHA256");
-                    SecretKeySpec secretKey = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+                    String dataToSign = timestamp + "." + rawBody;
+                    Mac mac = Mac.getInstance(HMAC_SHA256);
+                    SecretKeySpec secretKey = new SecretKeySpec(
+                            sePayProperties.getWebhookSecret().getBytes(StandardCharsets.UTF_8), HMAC_SHA256);
                     mac.init(secretKey);
-
-                    String payloadToSign = timestampHeader.trim() + "." + rawBody;
-                    byte[] hmacBytes = mac.doFinal(payloadToSign.getBytes(StandardCharsets.UTF_8));
+                    byte[] hmacBytes = mac.doFinal(dataToSign.getBytes(StandardCharsets.UTF_8));
                     String expectedSignature = "sha256=" + HexFormat.of().formatHex(hmacBytes);
 
                     if (isConstantTimeEqual(expectedSignature.toLowerCase(), signature.trim().toLowerCase())) {
@@ -277,9 +279,12 @@ public class SePayWebhookServiceImpl implements SePayWebhookService {
             }
 
             // Khách chuyển đủ hoặc thừa tiền (Paid / Overpaid)
+            // Chống Race Condition: Thêm điều kiện status != CANCELLED và paymentStatus == UNPAID
             boolean isOverpaid = diff.compareTo(BigDecimal.ZERO) > 0;
             Query query = new Query(Criteria.where("orderCode").is(order.getOrderCode())
-                    .and("paymentStatus").is(PaymentStatus.UNPAID));
+                    .and("paymentStatus").is(PaymentStatus.UNPAID)
+                    .and("status").ne(OrderStatus.CANCELLED));
+
             Update update = new Update()
                     .set("paymentStatus", PaymentStatus.PAID)
                     .set("status", OrderStatus.CONFIRMED)
@@ -295,13 +300,28 @@ public class SePayWebhookServiceImpl implements SePayWebhookService {
             if (updateResult.getModifiedCount() > 0) {
                 log.info("SePay Webhook: Cập nhật thành công PAID và CONFIRMED cho đơn: {}, isOverpaid={}, diff={}",
                         orderCode, isOverpaid, diff);
+                transaction.setStatus(SePayTransactionStatus.PROCESSED);
+                transaction.setAmountDiscrepancy(diff.longValue());
+                sePayTransactionRepository.save(transaction);
             } else {
-                log.warn("SePay Webhook: Đơn hàng {} không thể cập nhật (có thể đã được xử lý bởi luồng khác).", orderCode);
+                // modifiedCount == 0: Đơn hàng không update được (có thể đã bị hủy hoặc luồng khác thanh toán)
+                Order latestOrder = orderRepository.findByOrderCode(orderCode).orElse(null);
+                if (latestOrder != null && latestOrder.getStatus() == OrderStatus.CANCELLED) {
+                    log.warn("SePay Webhook: Đơn hàng {} đã bị hủy trước khi nhận tiền (Race condition). Đánh dấu MISMATCH để hoàn tiền.", orderCode);
+                    transaction.setStatus(SePayTransactionStatus.MISMATCH);
+                    transaction.setAmountDiscrepancy(paidAmount.longValue());
+                    transaction.setFailureReason("Đơn hàng đã bị hủy trước khi nhận thanh toán - Cần hoàn tiền");
+                } else if (latestOrder != null && latestOrder.getPaymentStatus() == PaymentStatus.PAID) {
+                    log.info("SePay Webhook: Đơn hàng {} đã ở trạng thái PAID bởi giao dịch khác.", orderCode);
+                    transaction.setStatus(SePayTransactionStatus.PROCESSED);
+                    transaction.setAmountDiscrepancy(diff.longValue());
+                } else {
+                    log.warn("SePay Webhook: Không thể cập nhật trạng thái đơn {}. Đánh dấu MISMATCH.", orderCode);
+                    transaction.setStatus(SePayTransactionStatus.MISMATCH);
+                    transaction.setFailureReason("Không thể cập nhật trạng thái đơn hàng (trạng thái không phù hợp)");
+                }
+                sePayTransactionRepository.save(transaction);
             }
-
-            transaction.setStatus(SePayTransactionStatus.PROCESSED);
-            transaction.setAmountDiscrepancy(diff.longValue());
-            sePayTransactionRepository.save(transaction);
 
             return WebhookResult.ok();
 

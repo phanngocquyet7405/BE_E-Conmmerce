@@ -225,30 +225,43 @@ public class OrderServiceImpl implements OrderService {
         return PageResponse.fromPage(page);
     }
 
+    /**
+     * Hủy đơn hàng nguyên tử (Chống Race Condition):
+     * Chỉ hủy khi đơn hàng ở trạng thái PENDING và UNPAID.
+     * CHỈ hoàn tồn kho khi thao tác cập nhật nguyên tử khớp và thành công.
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public OrderResponse cancelOrder(String userId, String orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+        Query query = Query.query(Criteria.where("_id").is(orderId)
+                .and("userId").is(userId)
+                .and("status").is(OrderStatus.PENDING)
+                .and("paymentStatus").is(PaymentStatus.UNPAID));
 
-        if (!order.getUserId().equals(userId)) {
-            throw new AppException(ErrorCode.ACCESS_DENIED);
+        Update update = new Update()
+                .set("status", OrderStatus.CANCELLED)
+                .set("updatedAt", Instant.now());
+
+        Order cancelledOrder = mongoTemplate.findAndModify(query, update,
+                FindAndModifyOptions.options().returnNew(true), Order.class);
+
+        if (cancelledOrder == null) {
+            Order existing = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+            if (!existing.getUserId().equals(userId)) {
+                throw new AppException(ErrorCode.ACCESS_DENIED);
+            }
+
+            throw new AppException(ErrorCode.ORDER_CANNOT_BE_CANCELLED,
+                    "Đơn hàng không ở trạng thái PENDING/UNPAID để hủy (Hiện tại: "
+                            + existing.getStatus() + ", Thanh toán: " + existing.getPaymentStatus() + ")");
         }
 
-        if (order.getStatus() != OrderStatus.PENDING) {
-            throw new AppException(ErrorCode.ORDER_CANNOT_BE_CANCELLED);
-        }
-
-        order.setStatus(OrderStatus.CANCELLED);
-        if (order.getPaymentStatus() == PaymentStatus.PAID) {
-            order.setPaymentStatus(PaymentStatus.REFUNDED);
-        }
-
-        restoreProductStock(order.getItems());
-
-        Order saved = orderRepository.save(order);
-        log.info("Khách hàng {} đã hủy đơn hàng {}", userId, order.getOrderCode());
-        return mapToOrderResponse(saved);
+        // CHỈ hoàn lại tồn kho khi cập nhật nguyên tử thành công
+        restoreProductStock(cancelledOrder.getItems());
+        log.info("Khách hàng {} đã hủy thành công đơn hàng {}", userId, cancelledOrder.getOrderCode());
+        return mapToOrderResponse(cancelledOrder);
     }
 
     @Override
@@ -286,41 +299,46 @@ public class OrderServiceImpl implements OrderService {
         }
 
         Order saved = orderRepository.save(order);
-        log.info("Admin cập nhật trạng thái đơn {} từ {} sang {}", order.getOrderCode(), current, next);
+        log.info("Admin cập trạng thái đơn {} từ {} sang {}", order.getOrderCode(), current, next);
         return mapToOrderResponse(saved);
     }
 
     /**
-     * Tự động quét và hủy các đơn hàng chưa thanh toán đã quá thời hạn timeoutMinutes,
-     * hoàn lại số lượng tồn kho nguyên tử cho từng sản phẩm trong đơn.
+     * Tự động quét và hủy các đơn hàng chưa thanh toán đã quá thời hạn timeoutMinutes nguyên tử,
+     * CHỈ hoàn tồn kho khi lệnh cập nhật nguyên tử findAndModify thành công (chống race condition).
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public int cancelExpiredOrders(int timeoutMinutes) {
         Instant cutoff = Instant.now().minus(timeoutMinutes, ChronoUnit.MINUTES);
 
-        Query query = Query.query(Criteria.where("status").is(OrderStatus.PENDING)
-                .and("payment_status").is(PaymentStatus.UNPAID)
-                .and("payment_method").ne(PaymentMethod.COD)
-                .and("created_at").lte(cutoff));
+        Query candidateQuery = Query.query(Criteria.where("status").is(OrderStatus.PENDING)
+                .and("paymentStatus").is(PaymentStatus.UNPAID)
+                .and("paymentMethod").ne(PaymentMethod.COD)
+                .and("createdAt").lte(cutoff));
 
-        List<Order> expiredOrders = mongoTemplate.find(query, Order.class);
-
-        if (expiredOrders.isEmpty()) {
+        List<Order> candidates = mongoTemplate.find(candidateQuery, Order.class);
+        if (candidates.isEmpty()) {
             return 0;
         }
 
         int count = 0;
-        for (Order order : expiredOrders) {
-            try {
-                order.setStatus(OrderStatus.CANCELLED);
-                restoreProductStock(order.getItems());
-                orderRepository.save(order);
+        for (Order candidate : candidates) {
+            Query atomicQuery = Query.query(Criteria.where("_id").is(candidate.getId())
+                    .and("status").is(OrderStatus.PENDING)
+                    .and("paymentStatus").is(PaymentStatus.UNPAID));
+            Update update = new Update()
+                    .set("status", OrderStatus.CANCELLED)
+                    .set("updatedAt", Instant.now());
+
+            Order cancelled = mongoTemplate.findAndModify(atomicQuery, update,
+                    FindAndModifyOptions.options().returnNew(true), Order.class);
+
+            if (cancelled != null) {
+                restoreProductStock(cancelled.getItems());
                 count++;
                 log.info("Tự động hủy đơn hàng quá hạn thanh toán: {} (tạo lúc {})",
-                        order.getOrderCode(), order.getCreatedAt());
-            } catch (Exception ex) {
-                log.error("Không thể tự động hủy đơn hàng {}: {}", order.getOrderCode(), ex.getMessage(), ex);
+                        cancelled.getOrderCode(), cancelled.getCreatedAt());
             }
         }
         return count;
