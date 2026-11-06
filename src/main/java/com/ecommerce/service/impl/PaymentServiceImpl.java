@@ -23,9 +23,16 @@ public class PaymentServiceImpl implements PaymentService {
     private final SePayService sePayService;
 
     @Override
-    public PaymentQrResponse getPaymentQrInfo(String orderId) {
+    public PaymentQrResponse getPaymentQrInfo(String userId, boolean isAdmin, String orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+        // Phòng chống IDOR: Nếu không phải Admin và không phải chủ đơn hàng thì ném ORDER_NOT_FOUND
+        if (!isAdmin && (userId == null || !order.getUserId().equals(userId))) {
+            log.warn("Cảnh báo IDOR: User {} cố gắng truy cập thông tin thanh toán của đơn hàng {} (thuộc về {})",
+                    userId, orderId, order.getUserId());
+            throw new AppException(ErrorCode.ORDER_NOT_FOUND);
+        }
 
         String accNumber = sePayService.getBankAccount();
         String bank = sePayService.getBankId();
@@ -60,9 +67,16 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public PaymentStatusResponse checkPaymentStatus(String orderId) {
+    public PaymentStatusResponse checkPaymentStatus(String userId, boolean isAdmin, String orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+        // Phòng chống IDOR: Nếu không phải Admin và không phải chủ đơn hàng thì ném ORDER_NOT_FOUND
+        if (!isAdmin && (userId == null || !order.getUserId().equals(userId))) {
+            log.warn("Cảnh báo IDOR: User {} cố gắng kiểm tra trạng thái thanh toán của đơn hàng {} (thuộc về {})",
+                    userId, orderId, order.getUserId());
+            throw new AppException(ErrorCode.ORDER_NOT_FOUND);
+        }
 
         return PaymentStatusResponse.builder()
                 .orderId(order.getId())

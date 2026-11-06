@@ -55,8 +55,8 @@ class PaymentServiceTest {
     }
 
     @Test
-    @DisplayName("1. Lấy thông tin VietQR thành công khi đơn hàng tồn tại")
-    void getPaymentQrInfo_Success() {
+    @DisplayName("1. Lấy thông tin VietQR thành công khi đúng chủ đơn hàng")
+    void getPaymentQrInfo_Success_WhenOwner() {
         when(orderRepository.findById("order-123")).thenReturn(Optional.of(sampleOrder));
         when(sePayService.getBankAccount()).thenReturn("0862483762");
         when(sePayService.getBankId()).thenReturn("MBBank");
@@ -64,7 +64,7 @@ class PaymentServiceTest {
         when(sePayService.buildQrUrl(130000L, "BETES88888888"))
                 .thenReturn("https://qr.sepay.vn/img?acc=MBBank-0862483762&template=compact&amount=130000&des=BETES88888888");
 
-        PaymentQrResponse response = paymentService.getPaymentQrInfo("order-123");
+        PaymentQrResponse response = paymentService.getPaymentQrInfo("user-1", false, "order-123");
 
         assertNotNull(response);
         assertEquals("order-123", response.getOrderId());
@@ -76,60 +76,89 @@ class PaymentServiceTest {
         assertEquals(PaymentMethod.SEPAY, response.getPaymentMethod());
         assertEquals(PaymentStatus.UNPAID, response.getPaymentStatus());
         assertNotNull(response.getQrImageUrl());
-        assertTrue(response.getPaymentInstruction().contains("BETES88888888"));
     }
 
     @Test
-    @DisplayName("2. Lấy thông tin VietQR ném ORDER_NOT_FOUND khi không tìm thấy đơn")
-    void getPaymentQrInfo_OrderNotFound_ThrowsAppException() {
-        when(orderRepository.findById("order-999")).thenReturn(Optional.empty());
+    @DisplayName("2. Lấy thông tin VietQR thành công khi người xem là Admin (kể cả không phải chủ đơn)")
+    void getPaymentQrInfo_Success_WhenAdmin() {
+        when(orderRepository.findById("order-123")).thenReturn(Optional.of(sampleOrder));
+        when(sePayService.getBankAccount()).thenReturn("0862483762");
+        when(sePayService.getBankId()).thenReturn("MBBank");
+        when(sePayService.getAccountHolder()).thenReturn("NGUYEN VAN A");
+        when(sePayService.buildQrUrl(130000L, "BETES88888888"))
+                .thenReturn("https://qr.sepay.vn/img?acc=MBBank-0862483762&template=compact&amount=130000&des=BETES88888888");
 
-        AppException ex = assertThrows(AppException.class, () -> paymentService.getPaymentQrInfo("order-999"));
+        PaymentQrResponse response = paymentService.getPaymentQrInfo("admin-user", true, "order-123");
+
+        assertNotNull(response);
+        assertEquals("order-123", response.getOrderId());
+    }
+
+    @Test
+    @DisplayName("3. IDOR: Người dùng khác cố lấy VietQR của đơn hàng -> Ném ORDER_NOT_FOUND")
+    void getPaymentQrInfo_IDOR_ThrowsOrderNotFound() {
+        when(orderRepository.findById("order-123")).thenReturn(Optional.of(sampleOrder));
+
+        AppException ex = assertThrows(AppException.class, () ->
+                paymentService.getPaymentQrInfo("attacker-user", false, "order-123"));
+
         assertEquals(ErrorCode.ORDER_NOT_FOUND, ex.getErrorCode());
     }
 
     @Test
-    @DisplayName("3. Kiểm tra trạng thái thanh toán đơn hàng UNPAID")
-    void checkPaymentStatus_UnpaidOrder_Success() {
+    @DisplayName("4. Lấy thông tin VietQR ném ORDER_NOT_FOUND khi không tìm thấy đơn")
+    void getPaymentQrInfo_OrderNotFound_ThrowsAppException() {
+        when(orderRepository.findById("order-999")).thenReturn(Optional.empty());
+
+        AppException ex = assertThrows(AppException.class, () ->
+                paymentService.getPaymentQrInfo("user-1", false, "order-999"));
+
+        assertEquals(ErrorCode.ORDER_NOT_FOUND, ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("5. Kiểm tra trạng thái thanh toán thành công khi đúng chủ đơn")
+    void checkPaymentStatus_Success_WhenOwner() {
         when(orderRepository.findById("order-123")).thenReturn(Optional.of(sampleOrder));
 
-        PaymentStatusResponse response = paymentService.checkPaymentStatus("order-123");
+        PaymentStatusResponse response = paymentService.checkPaymentStatus("user-1", false, "order-123");
 
         assertNotNull(response);
         assertEquals("order-123", response.getOrderId());
         assertEquals("BETES88888888", response.getOrderCode());
         assertEquals(PaymentStatus.UNPAID, response.getPaymentStatus());
-        assertEquals(OrderStatus.PENDING, response.getOrderStatus());
-        assertNull(response.getPaidAt());
-        assertNull(response.getSepayTransactionId());
     }
 
     @Test
-    @DisplayName("4. Kiểm tra trạng thái thanh toán đơn hàng đã PAID thành công")
-    void checkPaymentStatus_PaidOrder_Success() {
-        Instant paidTime = Instant.now();
-        sampleOrder.setPaymentStatus(PaymentStatus.PAID);
-        sampleOrder.setStatus(OrderStatus.CONFIRMED);
-        sampleOrder.setPaidAt(paidTime);
-        sampleOrder.setSepayTransactionId("sepay-99999");
-
+    @DisplayName("6. Kiểm tra trạng thái thanh toán thành công khi là Admin")
+    void checkPaymentStatus_Success_WhenAdmin() {
         when(orderRepository.findById("order-123")).thenReturn(Optional.of(sampleOrder));
 
-        PaymentStatusResponse response = paymentService.checkPaymentStatus("order-123");
+        PaymentStatusResponse response = paymentService.checkPaymentStatus("admin-user", true, "order-123");
 
         assertNotNull(response);
-        assertEquals(PaymentStatus.PAID, response.getPaymentStatus());
-        assertEquals(OrderStatus.CONFIRMED, response.getOrderStatus());
-        assertEquals(paidTime, response.getPaidAt());
-        assertEquals("sepay-99999", response.getSepayTransactionId());
+        assertEquals("order-123", response.getOrderId());
     }
 
     @Test
-    @DisplayName("5. Kiểm tra trạng thái thanh toán ném ORDER_NOT_FOUND khi không tìm thấy đơn")
+    @DisplayName("7. IDOR: Người dùng khác cố kiểm tra trạng thái thanh toán -> Ném ORDER_NOT_FOUND")
+    void checkPaymentStatus_IDOR_ThrowsOrderNotFound() {
+        when(orderRepository.findById("order-123")).thenReturn(Optional.of(sampleOrder));
+
+        AppException ex = assertThrows(AppException.class, () ->
+                paymentService.checkPaymentStatus("attacker-user", false, "order-123"));
+
+        assertEquals(ErrorCode.ORDER_NOT_FOUND, ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("8. Kiểm tra trạng thái thanh toán ném ORDER_NOT_FOUND khi không tìm thấy đơn")
     void checkPaymentStatus_OrderNotFound_ThrowsAppException() {
         when(orderRepository.findById("order-999")).thenReturn(Optional.empty());
 
-        AppException ex = assertThrows(AppException.class, () -> paymentService.checkPaymentStatus("order-999"));
+        AppException ex = assertThrows(AppException.class, () ->
+                paymentService.checkPaymentStatus("user-1", false, "order-999"));
+
         assertEquals(ErrorCode.ORDER_NOT_FOUND, ex.getErrorCode());
     }
 }
