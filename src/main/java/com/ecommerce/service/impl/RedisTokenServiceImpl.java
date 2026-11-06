@@ -22,6 +22,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
     private static final String BLACKLIST_KEY_PREFIX = "blacklist_token:";
     private static final String BLOCKED_USER_PREFIX = "blocked:user:";
     private static final String OTP_KEY_PREFIX = "otp:";
+    private static final String OTP_ATTEMPTS_PREFIX = "otp_attempts:";
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final AppProperties appProperties;
@@ -168,6 +169,29 @@ public class RedisTokenServiceImpl implements RedisTokenService {
             redisTemplate.delete(OTP_KEY_PREFIX + key);
         } catch (Exception e) {
             log.warn("Không thể xóa OTP trên Redis: {}", e.getMessage());
+        }
+    }
+
+    @Override
+    public int incrementOtpAttempts(String key, long ttlSeconds) {
+        try {
+            String redisKey = OTP_ATTEMPTS_PREFIX + key;
+            Long count = redisTemplate.opsForValue().increment(redisKey);
+            if (count != null && count == 1L) {
+                redisTemplate.expire(redisKey, ttlSeconds, TimeUnit.SECONDS);
+            }
+            return count != null ? count.intValue() : 1;
+        } catch (Exception e) {
+            log.warn("Lỗi khi tăng số lần nhập sai OTP: {}", e.getMessage());
+            return 1;
+        }
+    }
+
+    @Override
+    public void resetOtpAttempts(String key) {
+        try {
+            redisTemplate.delete(OTP_ATTEMPTS_PREFIX + key);
+        } catch (Exception ignored) {
         }
     }
 }

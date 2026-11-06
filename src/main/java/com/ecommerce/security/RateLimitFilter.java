@@ -78,6 +78,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.REFRESH)) {
             return 10; // Tối đa 10 lần refresh token / phút / IP
         }
+        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.FORGOT_PASSWORD)) {
+            return 3; // Tối đa 3 lần yêu cầu quên mật khẩu / phút / IP
+        }
+        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.SEND_VERIFICATION_OTP)) {
+            return 3; // Tối đa 3 lần yêu cầu gửi OTP / phút / IP
+        }
+        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_OTP)) {
+            return 5; // Tối đa 5 lần verify OTP / phút / IP
+        }
+        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_ACCOUNT)) {
+            return 5; // Tối đa 5 lần verify account / phút / IP
+        }
+        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESET_PASSWORD)) {
+            return 5; // Tối đa 5 lần reset mật khẩu / phút / IP
+        }
         if (uri.startsWith(ApiRoutes.Media.BASE)) {
             return 10; // Tối đa 10 lần upload ảnh / phút / IP bảo vệ băng thông và Cloudinary quota
         }

@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.MediaType;
@@ -66,6 +67,9 @@ class UserBlockMechanismTest {
     @Mock
     private com.ecommerce.service.EmailService emailService;
 
+    @Mock
+    private Environment environment;
+
     private AppProperties appProperties;
     private RedisTokenServiceImpl redisTokenService;
     private UserServiceImpl userService;
@@ -81,7 +85,7 @@ class UserBlockMechanismTest {
         userService = new UserServiceImpl(userRepository, redisTokenService);
         authService = new AuthServiceImpl(
                 userRepository, passwordEncoder, authenticationManager,
-                jwtUtil, redisTokenService, emailService, appProperties
+                jwtUtil, redisTokenService, emailService, appProperties, environment
         );
     }
 
