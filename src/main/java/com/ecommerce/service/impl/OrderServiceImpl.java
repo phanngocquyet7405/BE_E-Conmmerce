@@ -17,6 +17,7 @@ import com.mongodb.MongoException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.MongoTransactionManager;
@@ -52,6 +53,9 @@ public class OrderServiceImpl implements OrderService {
 
     @Autowired(required = false)
     private MongoTransactionManager transactionManager;
+
+    @Value("${app.order.shipping-fee:30000}")
+    private BigDecimal configuredShippingFee;
 
     private static final int MAX_TRANSACTION_RETRY_ATTEMPTS = 3;
 
@@ -144,7 +148,9 @@ public class OrderServiceImpl implements OrderService {
                 decrementedItems.add(orderItem);
             }
 
-            BigDecimal shippingFee = BigDecimal.valueOf(30000);
+            BigDecimal shippingFee = (configuredShippingFee != null)
+                    ? configuredShippingFee
+                    : BigDecimal.valueOf(30000);
             BigDecimal finalAmount = totalAmount.add(shippingFee);
 
             // Sinh mã đơn hàng dạng prefix + 8 số ngẫu nhiên (vd: BETES12345678)

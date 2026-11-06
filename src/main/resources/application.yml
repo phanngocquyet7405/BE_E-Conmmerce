@@ -63,6 +63,9 @@ app:
   upload:
     dir: ${UPLOAD_DIR:uploads}
     base-url: ${UPLOAD_BASE_URL:http://localhost:8080/uploads}
+  order:
+    shipping-fee: ${ORDER_SHIPPING_FEE:30000}
+    unpaid-timeout-minutes: ${ORDER_UNPAID_TIMEOUT_MINUTES:15}
 
 sepay:
   bank-id: ${SEPAY_BANK_ID:}

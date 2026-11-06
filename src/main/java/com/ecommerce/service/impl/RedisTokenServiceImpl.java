@@ -99,7 +99,7 @@ public class RedisTokenServiceImpl implements RedisTokenService {
     public void blockUser(String userId) {
         try {
             long epochSeconds = Instant.now().getEpochSecond();
-            long ttlMillis = (appProperties != null && appProperties.getJwt() != null)
+            long ttlMillis = (appProperties.getJwt() != null)
                     ? appProperties.getJwt().getAccessExpirationMs()
                     : 3600000L;
 
