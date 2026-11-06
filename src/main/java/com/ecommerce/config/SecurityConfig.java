@@ -74,8 +74,8 @@ public class SecurityConfig {
                     "/swagger-ui.html"
                 ).permitAll()
 
-                // 2. Upload ảnh & Các endpoint thanh toán còn lại yêu cầu authenticated
-                .requestMatchers(ApiRoutes.Media.BASE + "/**").authenticated()
+                // 2. Upload ảnh yêu cầu quyền ADMIN; endpoint thanh toán còn lại yêu cầu authenticated
+                .requestMatchers(ApiRoutes.Media.BASE + "/**").hasRole("ADMIN")
                 .requestMatchers(ApiRoutes.Payment.BASE + "/**").authenticated()
                 .requestMatchers("/api/payments/**").authenticated()
 

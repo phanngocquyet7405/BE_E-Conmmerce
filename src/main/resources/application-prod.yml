@@ -13,6 +13,12 @@ spring:
         enabled: ${REDIS_SSL_ENABLED:true}
       timeout: 500ms
 
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 logging:
   level:
     root: WARN
