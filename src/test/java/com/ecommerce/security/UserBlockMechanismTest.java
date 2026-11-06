@@ -5,10 +5,12 @@ import com.ecommerce.config.AppProperties;
 import com.ecommerce.controller.AdminUserController;
 import com.ecommerce.document.User;
 import com.ecommerce.dto.request.LoginRequest;
+import com.ecommerce.dto.response.AdminUserResponse;
 import com.ecommerce.dto.response.TokenResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.exception.GlobalExceptionHandler;
+import com.ecommerce.repository.OrderRepository;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.service.impl.AuthServiceImpl;
 import com.ecommerce.service.impl.RedisTokenServiceImpl;
@@ -21,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.env.Environment;
+import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.MediaType;
@@ -59,6 +62,12 @@ class UserBlockMechanismTest {
     private PasswordEncoder passwordEncoder;
 
     @Mock
+    private OrderRepository orderRepository;
+
+    @Mock
+    private MongoTemplate mongoTemplate;
+
+    @Mock
     private AuthenticationManager authenticationManager;
 
     @Mock
@@ -82,7 +91,7 @@ class UserBlockMechanismTest {
         appProperties.getJwt().setRefreshExpirationMs(604800000L); // 7d
 
         redisTokenService = new RedisTokenServiceImpl(redisTemplate, appProperties);
-        userService = new UserServiceImpl(userRepository, redisTokenService);
+        userService = new UserServiceImpl(userRepository, orderRepository, redisTokenService, mongoTemplate);
         authService = new AuthServiceImpl(
                 userRepository, passwordEncoder, authenticationManager,
                 jwtUtil, redisTokenService, emailService, appProperties, environment
@@ -149,14 +158,14 @@ class UserBlockMechanismTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(lockedUser));
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        User unlockedUser = userService.updateUserStatus(userId, true);
+        AdminUserResponse unlockedUser = userService.updateUserStatus("admin-id", userId, true);
         assertTrue(unlockedUser.isActive());
 
         // Xác nhận đã xóa key blocked:user trên Redis
         verify(redisTemplate, times(1)).delete("blocked:user:" + userId);
 
         // 3. User đăng nhập lại sau khi mở khóa
-        when(userRepository.findByEmail(email)).thenReturn(Optional.of(unlockedUser));
+        when(userRepository.findByEmail(email)).thenReturn(Optional.of(lockedUser));
         CustomUserDetails userDetails = new CustomUserDetails(
                 userId, email, List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER"))
         );
@@ -200,7 +209,7 @@ class UserBlockMechanismTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser));
         when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("Redis timeout"));
 
-        AppException exception = assertThrows(AppException.class, () -> userService.updateUserStatus(userId, false));
+        AppException exception = assertThrows(AppException.class, () -> userService.updateUserStatus("admin-id", userId, false));
 
         assertEquals(ErrorCode.INTERNAL_SERVER_ERROR, exception.getErrorCode());
         assertEquals("Không thể áp dụng khóa/đổi quyền ngay, vui lòng thử lại", exception.getMessage());
@@ -224,7 +233,7 @@ class UserBlockMechanismTest {
         when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("Redis timeout"));
 
         AppException exception = assertThrows(AppException.class, () ->
-                userService.updateUserRoles(userId, Set.of(RoleEnum.ROLE_ADMIN)));
+                userService.updateUserRoles("admin-id", userId, Set.of(RoleEnum.ROLE_ADMIN)));
 
         assertEquals(ErrorCode.INTERNAL_SERVER_ERROR, exception.getErrorCode());
         verify(userRepository, never()).save(any(User.class));
@@ -245,8 +254,26 @@ class UserBlockMechanismTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser));
         when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("Redis connection down"));
 
+        org.springframework.web.method.support.HandlerMethodArgumentResolver authPrincipalResolver =
+                new org.springframework.web.method.support.HandlerMethodArgumentResolver() {
+                    @Override
+                    public boolean supportsParameter(org.springframework.core.MethodParameter parameter) {
+                        return parameter.hasParameterAnnotation(org.springframework.security.core.annotation.AuthenticationPrincipal.class);
+                    }
+
+                    @Override
+                    public Object resolveArgument(org.springframework.core.MethodParameter parameter,
+                                                  org.springframework.web.method.support.ModelAndViewContainer mavContainer,
+                                                  org.springframework.web.context.request.NativeWebRequest webRequest,
+                                                  org.springframework.web.bind.support.WebDataBinderFactory binderFactory) {
+                        return new CustomUserDetails("admin-super", "admin@ecommerce.com",
+                                java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+                    }
+                };
+
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new AdminUserController(userService))
                 .setControllerAdvice(new GlobalExceptionHandler())
+                .setCustomArgumentResolvers(authPrincipalResolver)
                 .build();
 
         mockMvc.perform(patch("/api/v1/admin/users/" + userId + "/status")

@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -14,4 +15,6 @@ public interface OrderRepository extends MongoRepository<Order, String> {
     Page<Order> findByUserIdOrderByCreatedAtDesc(String userId, Pageable pageable);
     Page<Order> findByStatusOrderByCreatedAtDesc(OrderStatus status, Pageable pageable);
     Optional<Order> findByOrderCode(String orderCode);
+    long countByUserId(String userId);
+    List<Order> findByUserId(String userId);
 }
