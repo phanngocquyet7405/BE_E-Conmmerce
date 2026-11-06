@@ -116,7 +116,7 @@ class UserBlockMechanismTest {
     }
 
     @Test
-    @DisplayName("(c) Mở khóa xong đăng nhập lại được: đang khóa bị từ chối 403, mở khóa xong đăng nhập thành công")
+    @DisplayName("(c) Mở khóa xong đăng nhập lại được: đang khóa bị từ chối 403 ACCESS_DENIED, mở khóa xong đăng nhập thành công")
     void unblock_User_AllowsLoginAgain() {
         String userId = "user-123";
         String email = "test@ecommerce.com";
@@ -127,6 +127,7 @@ class UserBlockMechanismTest {
                 .email(email)
                 .password("encoded_pass")
                 .active(false) // Đang bị khóa
+                .emailVerified(true) // Đã verify email nhưng bị admin khóa
                 .roles(Set.of(RoleEnum.ROLE_CUSTOMER))
                 .build();
 

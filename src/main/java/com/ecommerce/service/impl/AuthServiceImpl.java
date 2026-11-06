@@ -153,7 +153,8 @@ public class AuthServiceImpl implements AuthService {
 
     /**
      * 4. Chặn Đăng nhập (Login Block):
-     * - Nếu isActive == false, ném Exception thông báo: "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email"
+     * - Nếu isActive == false và chưa xác thực email: ném ACCOUNT_NOT_ACTIVATED (yêu cầu verify OTP)
+     * - Nếu isActive == false nhưng đã xác thực email: ném ACCESS_DENIED (bị admin khóa)
      * - Nếu hợp lệ, cấp Access Token và Refresh Token
      */
     @Override
@@ -164,9 +165,13 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new AppException(ErrorCode.BAD_CREDENTIALS));
 
-        // 2. Chặn đăng nhập nếu chưa kích hoạt
+        // 2. Chặn đăng nhập nếu chưa kích hoạt hoặc bị khóa
         if (!user.isActive()) {
-            throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email");
+            if (!user.isEmailVerified()) {
+                throw new AppException(ErrorCode.ACCOUNT_NOT_ACTIVATED, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email");
+            } else {
+                throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản của bạn đã bị khóa bởi quản trị viên");
+            }
         }
 
         try {
@@ -177,7 +182,7 @@ public class AuthServiceImpl implements AuthService {
             CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
             return buildAndSaveTokens(userDetails);
         } catch (DisabledException ex) {
-            throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email");
+            throw new AppException(ErrorCode.ACCOUNT_NOT_ACTIVATED, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email");
         } catch (BadCredentialsException ex) {
             throw new AppException(ErrorCode.BAD_CREDENTIALS);
         }
@@ -197,7 +202,11 @@ public class AuthServiceImpl implements AuthService {
                 .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED));
 
         if (!user.isActive()) {
-            throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email");
+            if (!user.isEmailVerified()) {
+                throw new AppException(ErrorCode.ACCOUNT_NOT_ACTIVATED, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email");
+            } else {
+                throw new AppException(ErrorCode.ACCESS_DENIED, "Tài khoản của bạn đã bị khóa bởi quản trị viên");
+            }
         }
 
         redisTokenService.deleteRefreshToken(userId, tokenId);

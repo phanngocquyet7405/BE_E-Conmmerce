@@ -18,6 +18,7 @@ public enum ErrorCode {
     EMAIL_ALREADY_EXISTS(1007, "Email này đã được đăng ký tài khoản", HttpStatus.CONFLICT),
     PASSWORD_NOT_MATCH(1008, "Mật khẩu hiện tại không chính xác", HttpStatus.BAD_REQUEST),
     ACCOUNT_NOT_ACTIVATED(1009, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email", HttpStatus.FORBIDDEN),
+    USER_NOT_ACTIVATED(1009, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email", HttpStatus.FORBIDDEN),
 
     // 2xxx: Validation & Request
     VALIDATION_ERROR(2001, "Dữ liệu gửi lên không thỏa mãn yêu cầu", HttpStatus.BAD_REQUEST),

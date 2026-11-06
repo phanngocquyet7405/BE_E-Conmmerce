@@ -108,7 +108,7 @@ class AuthEmailOtpFlowTest {
     }
 
     @Test
-    @DisplayName("2. Chặn đăng nhập: Tài khoản isActive=false bị chặn với thông báo chính xác")
+    @DisplayName("2. Chặn đăng nhập: Tài khoản isActive=false bị chặn với mã ACCOUNT_NOT_ACTIVATED")
     void login_InactiveUser_ThrowsException() {
         String email = "unverified@gmail.com";
         User inactiveUser = User.builder()
@@ -116,6 +116,7 @@ class AuthEmailOtpFlowTest {
                 .email(email)
                 .password("encoded_pass")
                 .active(false) // Chưa kích hoạt
+                .emailVerified(false)
                 .roles(Set.of(RoleEnum.ROLE_CUSTOMER))
                 .build();
 
@@ -126,7 +127,7 @@ class AuthEmailOtpFlowTest {
         loginRequest.setPassword("password123");
 
         AppException ex = assertThrows(AppException.class, () -> authService.login(loginRequest));
-        assertEquals(ErrorCode.ACCESS_DENIED, ex.getErrorCode());
+        assertEquals(ErrorCode.ACCOUNT_NOT_ACTIVATED, ex.getErrorCode());
         assertEquals("Tài khoản chưa được kích hoạt, vui lòng kiểm tra email", ex.getMessage());
         verify(authenticationManager, never()).authenticate(any());
     }
