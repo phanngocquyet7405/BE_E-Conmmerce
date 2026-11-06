@@ -1,6 +1,5 @@
 package com.ecommerce.service.impl;
 
-import com.ecommerce.config.AppProperties;
 import com.ecommerce.document.Order;
 import com.ecommerce.dto.response.PaymentQrResponse;
 import com.ecommerce.dto.response.PaymentStatusResponse;
@@ -21,7 +20,6 @@ import java.math.BigDecimal;
 public class PaymentServiceImpl implements PaymentService {
 
     private final OrderRepository orderRepository;
-    private final AppProperties appProperties;
     private final SePayService sePayService;
 
     @Override
@@ -31,20 +29,19 @@ public class PaymentServiceImpl implements PaymentService {
 
         String accNumber = sePayService.getBankAccount();
         String bank = sePayService.getBankId();
-        String holder = (appProperties != null && appProperties.getSepay() != null)
-                ? appProperties.getSepay().getAccountHolder()
-                : null;
+        String holder = sePayService.getAccountHolder();
 
         String transferContent = order.getOrderCode();
         BigDecimal amount = order.getFinalAmount();
 
         // Sử dụng SePayService định dạng chuẩn VietQR SePay:
         // https://qr.sepay.vn/img?acc={bank-id}-{bank-account}&template=compact&amount={amount}&des={orderCode}
-        String qrImageUrl = sePayService.buildQrUrl(amount.longValue(), transferContent);
+        long amountValue = amount != null ? amount.longValue() : 0L;
+        String qrImageUrl = sePayService.buildQrUrl(amountValue, transferContent);
 
         String instruction = String.format(
                 "Vui lòng quét mã QR hoặc chuyển khoản chính xác số tiền %s đ vào tài khoản %s (%s) với nội dung: %s",
-                amount.toBigInteger(), accNumber, bank, transferContent
+                amount != null ? amount.toBigInteger() : 0, accNumber, bank, transferContent
         );
 
         return PaymentQrResponse.builder()

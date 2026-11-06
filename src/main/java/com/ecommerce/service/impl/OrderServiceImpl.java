@@ -1,7 +1,6 @@
 package com.ecommerce.service.impl;
 
 import com.ecommerce.common.response.PageResponse;
-import com.ecommerce.config.AppProperties;
 import com.ecommerce.document.*;
 import com.ecommerce.dto.request.CheckoutRequest;
 import com.ecommerce.dto.request.UpdateOrderStatusRequest;
@@ -29,6 +28,7 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
@@ -46,7 +46,6 @@ public class OrderServiceImpl implements OrderService {
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
     private final MongoTemplate mongoTemplate;
-    private final AppProperties appProperties;
     private final SePayService sePayService;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -142,7 +141,7 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal shippingFee = BigDecimal.valueOf(30000);
         BigDecimal finalAmount = totalAmount.add(shippingFee);
 
-        // Sinh mã đơn hàng dạng BETES + 8 số ngẫu nhiên (vd: BETES12345678)
+        // Sinh mã đơn hàng dạng prefix + 8 số ngẫu nhiên (vd: BETES12345678)
         String orderCode = generateUniqueOrderCode();
 
         PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
@@ -289,9 +288,12 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private String generateUniqueOrderCode() {
+        String prefix = (sePayService != null && StringUtils.hasText(sePayService.getOrderCodePrefix()))
+                ? sePayService.getOrderCodePrefix()
+                : "BETES";
         String code;
         do {
-            code = "BETES" + (10000000 + secureRandom.nextInt(90000000));
+            code = prefix + (10000000 + secureRandom.nextInt(90000000));
         } while (orderRepository.findByOrderCode(code).isPresent());
         return code;
     }
@@ -304,15 +306,13 @@ public class OrderServiceImpl implements OrderService {
         String transferContent = null;
 
         if (order.getPaymentMethod() == PaymentMethod.SEPAY || order.getPaymentMethod() == PaymentMethod.BANKING) {
-            bank = sePayService != null ? sePayService.getBankId() : null;
-            accNumber = sePayService != null ? sePayService.getBankAccount() : null;
-            holder = appProperties != null && appProperties.getSepay() != null ? appProperties.getSepay().getAccountHolder() : null;
+            bank = sePayService.getBankId();
+            accNumber = sePayService.getBankAccount();
+            holder = sePayService.getAccountHolder();
             transferContent = order.getOrderCode();
 
             long amount = order.getFinalAmount() != null ? order.getFinalAmount().longValue() : 0L;
-            if (sePayService != null) {
-                qrImageUrl = sePayService.buildQrUrl(amount, transferContent);
-            }
+            qrImageUrl = sePayService.buildQrUrl(amount, transferContent);
         }
 
         return OrderResponse.builder()

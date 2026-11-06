@@ -1,6 +1,5 @@
 package com.ecommerce.service;
 
-import com.ecommerce.config.AppProperties;
 import com.ecommerce.document.Order;
 import com.ecommerce.document.OrderStatus;
 import com.ecommerce.document.PaymentMethod;
@@ -33,9 +32,6 @@ class PaymentServiceTest {
     private OrderRepository orderRepository;
 
     @Mock
-    private AppProperties appProperties;
-
-    @Mock
     private SePayService sePayService;
 
     @InjectMocks
@@ -64,6 +60,7 @@ class PaymentServiceTest {
         when(orderRepository.findById("order-123")).thenReturn(Optional.of(sampleOrder));
         when(sePayService.getBankAccount()).thenReturn("0862483762");
         when(sePayService.getBankId()).thenReturn("MBBank");
+        when(sePayService.getAccountHolder()).thenReturn("NGUYEN VAN A");
         when(sePayService.buildQrUrl(130000L, "BETES88888888"))
                 .thenReturn("https://qr.sepay.vn/img?acc=MBBank-0862483762&template=compact&amount=130000&des=BETES88888888");
 
@@ -75,6 +72,7 @@ class PaymentServiceTest {
         assertEquals(BigDecimal.valueOf(130000), response.getAmount());
         assertEquals("0862483762", response.getAccountNumber());
         assertEquals("MBBank", response.getBankName());
+        assertEquals("NGUYEN VAN A", response.getAccountHolder());
         assertEquals(PaymentMethod.SEPAY, response.getPaymentMethod());
         assertEquals(PaymentStatus.UNPAID, response.getPaymentStatus());
         assertNotNull(response.getQrImageUrl());
