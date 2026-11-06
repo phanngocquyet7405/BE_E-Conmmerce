@@ -98,6 +98,10 @@ public class Order {
     @Field("note")
     private String note;
 
+    @Field("stock_restored")
+    @Builder.Default
+    private Boolean stockRestored = false;
+
     @CreatedDate
     @Field("created_at")
     private Instant createdAt;

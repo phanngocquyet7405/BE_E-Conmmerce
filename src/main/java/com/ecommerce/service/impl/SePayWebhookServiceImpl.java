@@ -258,27 +258,32 @@ public class SePayWebhookServiceImpl implements SePayWebhookService {
                 return WebhookResult.ok();
             }
 
-            // 10. Kiểm tra số tiền chuyển khoản
-            BigDecimal paidAmount = BigDecimal.valueOf(transferAmount);
+            // 10. Kiểm tra số tiền chuyển khoản và cộng dồn (Cumulative Payment - D5, D6)
+            BigDecimal transferAmountBD = BigDecimal.valueOf(transferAmount);
+            BigDecimal currentPaid = order.getPaidAmount() != null ? order.getPaidAmount() : BigDecimal.ZERO;
+            BigDecimal totalPaid = currentPaid.add(transferAmountBD);
             BigDecimal finalAmount = order.getFinalAmount() != null ? order.getFinalAmount() : BigDecimal.ZERO;
-            BigDecimal diff = paidAmount.subtract(finalAmount);
+            BigDecimal diff = totalPaid.subtract(finalAmount);
 
-            if (paidAmount.compareTo(finalAmount) < 0) {
-                // Khách chuyển thiếu tiền (Partial / Underpaid)
-                log.warn("SePay Webhook: Khách chuyển thiếu tiền cho đơn {}. Chuyển={}, Cần={}", orderCode, paidAmount, finalAmount);
-                order.setPaidAmount(paidAmount);
+            if (totalPaid.compareTo(finalAmount) < 0) {
+                // Khách chuyển thiếu tiền (Partial / Underpaid - D5: giữ đơn đến hết hạn, cho chuyển bù và cộng dồn)
+                log.warn("SePay Webhook: Khách chuyển thiếu tiền cho đơn {}. Vừa nhận={}, Đã tích lũy={}/{}",
+                        orderCode, transferAmountBD, totalPaid, finalAmount);
+
+                order.setPaidAmount(totalPaid);
                 order.setAmountDiscrepancy(diff);
                 order.setIsUnderpaid(true);
+                order.setIsOverpaid(false);
                 orderRepository.save(order);
 
                 transaction.setStatus(SePayTransactionStatus.MISMATCH);
                 transaction.setAmountDiscrepancy(diff.longValue());
-                transaction.setFailureReason("Khách chuyển thiếu tiền: " + paidAmount + "/" + finalAmount);
+                transaction.setFailureReason("Khách chuyển thiếu tiền: vừa nhận " + transferAmountBD + ", đã tích lũy " + totalPaid + "/" + finalAmount);
                 sePayTransactionRepository.save(transaction);
                 return WebhookResult.ok();
             }
 
-            // Khách chuyển đủ hoặc thừa tiền (Paid / Overpaid)
+            // Khách chuyển đủ hoặc thừa tiền (Paid / Overpaid - D6: ghi nhận phần dư, admin hoàn thủ công)
             // Chống Race Condition: Thêm điều kiện status != CANCELLED và paymentStatus == UNPAID
             boolean isOverpaid = diff.compareTo(BigDecimal.ZERO) > 0;
             Query query = new Query(Criteria.where("orderCode").is(order.getOrderCode())
@@ -289,7 +294,7 @@ public class SePayWebhookServiceImpl implements SePayWebhookService {
                     .set("paymentStatus", PaymentStatus.PAID)
                     .set("status", OrderStatus.CONFIRMED)
                     .set("paidAt", Instant.now())
-                    .set("paidAmount", paidAmount)
+                    .set("paidAmount", totalPaid)
                     .set("amountDiscrepancy", diff)
                     .set("isOverpaid", isOverpaid)
                     .set("isUnderpaid", false)
@@ -309,7 +314,7 @@ public class SePayWebhookServiceImpl implements SePayWebhookService {
                 if (latestOrder != null && latestOrder.getStatus() == OrderStatus.CANCELLED) {
                     log.warn("SePay Webhook: Đơn hàng {} đã bị hủy trước khi nhận tiền (Race condition). Đánh dấu MISMATCH để hoàn tiền.", orderCode);
                     transaction.setStatus(SePayTransactionStatus.MISMATCH);
-                    transaction.setAmountDiscrepancy(paidAmount.longValue());
+                    transaction.setAmountDiscrepancy(transferAmountBD.longValue());
                     transaction.setFailureReason("Đơn hàng đã bị hủy trước khi nhận thanh toán - Cần hoàn tiền");
                 } else if (latestOrder != null && latestOrder.getPaymentStatus() == PaymentStatus.PAID) {
                     log.info("SePay Webhook: Đơn hàng {} đã ở trạng thái PAID bởi giao dịch khác.", orderCode);

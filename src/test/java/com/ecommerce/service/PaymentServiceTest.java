@@ -34,6 +34,9 @@ class PaymentServiceTest {
     @Mock
     private SePayService sePayService;
 
+    @Mock
+    private com.ecommerce.repository.SePayTransactionRepository sePayTransactionRepository;
+
     @InjectMocks
     private PaymentServiceImpl paymentService;
 
@@ -160,5 +163,60 @@ class PaymentServiceTest {
                 paymentService.checkPaymentStatus("user-1", false, "order-999"));
 
         assertEquals(ErrorCode.ORDER_NOT_FOUND, ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("9. Admin lấy danh sách giao dịch SePay có phân trang và lọc theo trạng thái")
+    void getTransactionsForAdmin_Success() {
+        com.ecommerce.document.SePayTransaction tx = com.ecommerce.document.SePayTransaction.builder()
+                .id("tx-1")
+                .sepayId(12345L)
+                .status(com.ecommerce.document.SePayTransactionStatus.MISMATCH)
+                .amountIn(50000L)
+                .orderCode("BETES88888888")
+                .build();
+
+        org.springframework.data.domain.Page<com.ecommerce.document.SePayTransaction> page =
+                new org.springframework.data.domain.PageImpl<>(java.util.List.of(tx));
+
+        when(sePayTransactionRepository.findByStatusOrderByCreatedAtDesc(eq(com.ecommerce.document.SePayTransactionStatus.MISMATCH), any()))
+                .thenReturn(page);
+
+        com.ecommerce.common.response.PageResponse<com.ecommerce.dto.response.SePayTransactionResponse> response =
+                paymentService.getTransactionsForAdmin(com.ecommerce.document.SePayTransactionStatus.MISMATCH, org.springframework.data.domain.PageRequest.of(0, 10));
+
+        assertNotNull(response);
+        assertEquals(1, response.getItems().size());
+        assertEquals(12345L, response.getItems().get(0).getSepayId());
+    }
+
+    @Test
+    @DisplayName("10. Admin xử lý giao dịch SePay ghi nhận người xử lý và thời gian")
+    void processTransactionForAdmin_Success() {
+        com.ecommerce.document.SePayTransaction tx = com.ecommerce.document.SePayTransaction.builder()
+                .id("tx-1")
+                .sepayId(12345L)
+                .status(com.ecommerce.document.SePayTransactionStatus.MISMATCH)
+                .adminProcessed(false)
+                .build();
+
+        when(sePayTransactionRepository.findById("tx-1")).thenReturn(Optional.of(tx));
+        when(sePayTransactionRepository.save(any(com.ecommerce.document.SePayTransaction.class)))
+                .thenAnswer(i -> i.getArgument(0));
+
+        com.ecommerce.dto.request.AdminProcessTransactionRequest request =
+                com.ecommerce.dto.request.AdminProcessTransactionRequest.builder()
+                        .action("RESOLVED")
+                        .note("Đã đối soát thủ công và xác nhận với ngân hàng")
+                        .build();
+
+        com.ecommerce.dto.response.SePayTransactionResponse response =
+                paymentService.processTransactionForAdmin("admin@ecommerce.com", "tx-1", request);
+
+        assertNotNull(response);
+        assertTrue(response.getAdminProcessed());
+        assertEquals("admin@ecommerce.com", response.getProcessedBy());
+        assertEquals("Đã đối soát thủ công và xác nhận với ngân hàng", response.getAdminNote());
+        assertEquals(com.ecommerce.document.SePayTransactionStatus.PROCESSED, response.getStatus());
     }
 }

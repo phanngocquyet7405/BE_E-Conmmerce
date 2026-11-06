@@ -1,18 +1,30 @@
 package com.ecommerce.service.impl;
 
+import com.ecommerce.common.response.PageResponse;
 import com.ecommerce.document.Order;
+import com.ecommerce.document.PaymentMethod;
+import com.ecommerce.document.SePayTransaction;
+import com.ecommerce.document.SePayTransactionStatus;
+import com.ecommerce.dto.request.AdminProcessTransactionRequest;
+import com.ecommerce.dto.response.PaymentMethodResponse;
 import com.ecommerce.dto.response.PaymentQrResponse;
 import com.ecommerce.dto.response.PaymentStatusResponse;
+import com.ecommerce.dto.response.SePayTransactionResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.repository.OrderRepository;
+import com.ecommerce.repository.SePayTransactionRepository;
 import com.ecommerce.service.PaymentService;
 import com.ecommerce.service.SePayService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -21,6 +33,7 @@ public class PaymentServiceImpl implements PaymentService {
 
     private final OrderRepository orderRepository;
     private final SePayService sePayService;
+    private final SePayTransactionRepository sePayTransactionRepository;
 
     @Override
     public PaymentQrResponse getPaymentQrInfo(String userId, boolean isAdmin, String orderId) {
@@ -85,26 +98,60 @@ public class PaymentServiceImpl implements PaymentService {
                 .orderStatus(order.getStatus())
                 .paidAt(order.getPaidAt())
                 .sepayTransactionId(order.getSepayTransactionId())
+                .finalAmount(order.getFinalAmount() != null ? order.getFinalAmount() : BigDecimal.ZERO)
+                .paidAmount(order.getPaidAmount() != null ? order.getPaidAmount() : BigDecimal.ZERO)
+                .amountDiscrepancy(order.getAmountDiscrepancy() != null ? order.getAmountDiscrepancy() : BigDecimal.ZERO)
+                .isOverpaid(Boolean.TRUE.equals(order.getIsOverpaid()))
+                .isUnderpaid(Boolean.TRUE.equals(order.getIsUnderpaid()))
                 .build();
     }
 
     @Override
-    public java.util.List<com.ecommerce.dto.response.PaymentMethodResponse> getAvailablePaymentMethods() {
-        return java.util.List.of(
-                com.ecommerce.dto.response.PaymentMethodResponse.builder()
-                        .code(com.ecommerce.document.PaymentMethod.COD)
+    public List<PaymentMethodResponse> getAvailablePaymentMethods() {
+        return List.of(
+                PaymentMethodResponse.builder()
+                        .code(PaymentMethod.COD)
                         .name("Thanh toán khi nhận hàng (COD)")
                         .enabled(true)
                         .description("Thanh toán tiền mặt cho shipper khi nhận hàng.")
                         .condition("Áp dụng cho mọi đơn hàng.")
                         .build(),
-                com.ecommerce.dto.response.PaymentMethodResponse.builder()
-                        .code(com.ecommerce.document.PaymentMethod.SEPAY)
+                PaymentMethodResponse.builder()
+                        .code(PaymentMethod.SEPAY)
                         .name("Chuyển khoản VietQR qua SePay")
                         .enabled(true)
                         .description("Quét mã QR VietQR chuyển khoản tự động xác nhận tức thì qua SePay.")
                         .condition("Thời hạn giữ đơn và chuyển khoản là 15 phút.")
                         .build()
         );
+    }
+
+    @Override
+    public PageResponse<SePayTransactionResponse> getTransactionsForAdmin(SePayTransactionStatus status, Pageable pageable) {
+        Page<SePayTransaction> page = (status != null)
+                ? sePayTransactionRepository.findByStatusOrderByCreatedAtDesc(status, pageable)
+                : sePayTransactionRepository.findAllByOrderByCreatedAtDesc(pageable);
+        return PageResponse.fromPage(page.map(SePayTransactionResponse::fromEntity));
+    }
+
+    @Override
+    public SePayTransactionResponse processTransactionForAdmin(String adminEmail, String transactionId, AdminProcessTransactionRequest request) {
+        SePayTransaction tx = sePayTransactionRepository.findById(transactionId)
+                .orElseThrow(() -> new AppException(ErrorCode.INTERNAL_SERVER_ERROR, "Không tìm thấy giao dịch với ID: " + transactionId));
+
+        tx.setAdminProcessed(true);
+        tx.setProcessedBy(adminEmail != null ? adminEmail : "ADMIN");
+        tx.setProcessedAt(LocalDateTime.now());
+        tx.setAdminNote(request.getNote());
+
+        if ("REFUNDED".equalsIgnoreCase(request.getAction())) {
+            tx.setStatus(SePayTransactionStatus.PROCESSED);
+        } else if ("RESOLVED".equalsIgnoreCase(request.getAction())) {
+            tx.setStatus(SePayTransactionStatus.PROCESSED);
+        }
+
+        SePayTransaction saved = sePayTransactionRepository.save(tx);
+        log.info("Admin {} đã xử lý giao dịch SePay {}: action={}, note={}", adminEmail, tx.getSepayId(), request.getAction(), request.getNote());
+        return SePayTransactionResponse.fromEntity(saved);
     }
 }
