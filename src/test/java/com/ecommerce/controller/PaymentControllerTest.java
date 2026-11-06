@@ -4,6 +4,7 @@ import com.ecommerce.common.constant.ApiRoutes;
 import com.ecommerce.document.OrderStatus;
 import com.ecommerce.document.PaymentMethod;
 import com.ecommerce.document.PaymentStatus;
+import com.ecommerce.dto.response.PaymentMethodResponse;
 import com.ecommerce.dto.response.PaymentQrResponse;
 import com.ecommerce.dto.response.PaymentStatusResponse;
 import com.ecommerce.exception.AppException;
@@ -140,5 +141,34 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.data.paymentStatus").value("PAID"));
 
         verify(paymentService, times(1)).checkPaymentStatus("user-100", false, "order-100");
+    }
+
+    @Test
+    @DisplayName("4. GET /api/v1/payment/methods trả danh sách phương thức thanh toán đang bật")
+    void getPaymentMethods_Success() throws Exception {
+        PaymentMethodResponse cod = PaymentMethodResponse.builder()
+                .code(PaymentMethod.COD)
+                .name("Thanh toán khi nhận hàng (COD)")
+                .enabled(true)
+                .description("Mô tả COD")
+                .condition("Mọi đơn")
+                .build();
+        PaymentMethodResponse sepay = PaymentMethodResponse.builder()
+                .code(PaymentMethod.SEPAY)
+                .name("Chuyển khoản VietQR qua SePay")
+                .enabled(true)
+                .description("Mô tả SePay")
+                .condition("15 phút")
+                .build();
+
+        when(paymentService.getAvailablePaymentMethods()).thenReturn(List.of(cod, sepay));
+
+        mockMvc.perform(get(ApiRoutes.Payment.BASE + ApiRoutes.Payment.METHODS))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(1000))
+                .andExpect(jsonPath("$.data[0].code").value("COD"))
+                .andExpect(jsonPath("$.data[1].code").value("SEPAY"));
+
+        verify(paymentService, times(1)).getAvailablePaymentMethods();
     }
 }

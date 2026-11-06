@@ -158,6 +158,20 @@ public class OrderServiceImpl implements OrderService {
 
             PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
 
+            // Kiểm tra phương thức thanh toán hợp lệ (Theo D1: Chỉ cho phép COD và SEPAY, VNPAY/MOMO/BANKING bị từ chối rõ ràng)
+            if (paymentMethod != PaymentMethod.COD && paymentMethod != PaymentMethod.SEPAY) {
+                if (paymentMethod == PaymentMethod.MOMO || paymentMethod == PaymentMethod.VNPAY) {
+                    throw new AppException(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED,
+                            "Phương thức thanh toán ví điện tử " + paymentMethod + " hiện chưa được tích hợp.");
+                }
+                if (paymentMethod == PaymentMethod.BANKING) {
+                    throw new AppException(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED,
+                            "Chuyển khoản thủ công (BANKING) hiện không khả dụng. Vui lòng chọn SEPAY để quét mã VietQR tự động.");
+                }
+                throw new AppException(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED,
+                        "Phương thức thanh toán " + paymentMethod + " không được hỗ trợ.");
+            }
+
             Order order = Order.builder()
                     .orderCode(orderCode)
                     .userId(userId)

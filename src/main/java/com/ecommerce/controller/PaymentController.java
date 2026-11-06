@@ -2,6 +2,7 @@ package com.ecommerce.controller;
 
 import com.ecommerce.common.constant.ApiRoutes;
 import com.ecommerce.common.response.ApiResponse;
+import com.ecommerce.dto.response.PaymentMethodResponse;
 import com.ecommerce.dto.response.PaymentQrResponse;
 import com.ecommerce.dto.response.PaymentStatusResponse;
 import com.ecommerce.security.CustomUserDetails;
@@ -11,14 +12,23 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
-@RequestMapping(ApiRoutes.Payment.BASE)
+@RequestMapping({ApiRoutes.Payment.BASE, "/api/v1/payments"})
 @RequiredArgsConstructor
 public class PaymentController {
 
     private final PaymentService paymentService;
 
-    // 1. MOBILE/FE: Lấy mã VietQR SePay & thông tin chuyển khoản cho đơn hàng (Bảo vệ IDOR)
+    // 1. MOBILE/FE: Lấy danh sách phương thức thanh toán đang bật (COD, SEPAY)
+    @GetMapping({ApiRoutes.Payment.METHODS, "/payment-methods"})
+    public ResponseEntity<ApiResponse<List<PaymentMethodResponse>>> getPaymentMethods() {
+        return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách phương thức thanh toán thành công",
+                paymentService.getAvailablePaymentMethods()));
+    }
+
+    // 2. MOBILE/FE: Lấy mã VietQR SePay & thông tin chuyển khoản cho đơn hàng (Bảo vệ IDOR)
     @GetMapping(ApiRoutes.Payment.SEPAY_QR_INFO)
     public ResponseEntity<ApiResponse<PaymentQrResponse>> getPaymentQrInfo(
             @AuthenticationPrincipal CustomUserDetails userDetails,

@@ -65,6 +65,8 @@ public class SecurityConfig {
                     ApiRoutes.Products.PUBLIC_BASE + "/**",
                     ApiRoutes.Categories.PUBLIC_BASE + "/**",
                     ApiRoutes.Brands.PUBLIC_BASE + "/**",
+                    ApiRoutes.Payment.BASE + "/methods",
+                    "/api/v1/payments/methods",
                     "/api/payments/sepay-webhook",
                     "/uploads/**",
                     "/v3/api-docs/**",

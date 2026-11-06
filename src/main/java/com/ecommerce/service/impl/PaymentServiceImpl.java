@@ -87,4 +87,24 @@ public class PaymentServiceImpl implements PaymentService {
                 .sepayTransactionId(order.getSepayTransactionId())
                 .build();
     }
+
+    @Override
+    public java.util.List<com.ecommerce.dto.response.PaymentMethodResponse> getAvailablePaymentMethods() {
+        return java.util.List.of(
+                com.ecommerce.dto.response.PaymentMethodResponse.builder()
+                        .code(com.ecommerce.document.PaymentMethod.COD)
+                        .name("Thanh toán khi nhận hàng (COD)")
+                        .enabled(true)
+                        .description("Thanh toán tiền mặt cho shipper khi nhận hàng.")
+                        .condition("Áp dụng cho mọi đơn hàng.")
+                        .build(),
+                com.ecommerce.dto.response.PaymentMethodResponse.builder()
+                        .code(com.ecommerce.document.PaymentMethod.SEPAY)
+                        .name("Chuyển khoản VietQR qua SePay")
+                        .enabled(true)
+                        .description("Quét mã QR VietQR chuyển khoản tự động xác nhận tức thì qua SePay.")
+                        .condition("Thời hạn giữ đơn và chuyển khoản là 15 phút.")
+                        .build()
+        );
+    }
 }

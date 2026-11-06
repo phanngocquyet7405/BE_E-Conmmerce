@@ -245,4 +245,37 @@ class OrderServiceTest {
         assertEquals(ErrorCode.CART_EMPTY, exception.getErrorCode());
         verify(orderRepository, never()).save(any());
     }
+
+    @Test
+    @DisplayName("Checkout ném PAYMENT_METHOD_NOT_SUPPORTED khi chọn MOMO, VNPAY hoặc BANKING")
+    void checkout_UnsupportedPaymentMethod_ThrowsException() {
+        CartItem item = CartItem.builder()
+                .productId("prod-1")
+                .productName("Sản phẩm")
+                .unitPrice(BigDecimal.valueOf(50000))
+                .quantity(1)
+                .build();
+        testCart.getItems().add(item);
+
+        Product dbProduct = Product.builder()
+                .id("prod-1")
+                .name("Sản phẩm")
+                .sku("SKU-1")
+                .price(BigDecimal.valueOf(50000))
+                .stockQuantity(10)
+                .active(true)
+                .build();
+
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(testUser));
+        when(cartRepository.findByUserId("user-1")).thenReturn(Optional.of(testCart));
+        when(mongoTemplate.findAndModify(any(), any(), any(), eq(Product.class))).thenReturn(dbProduct);
+
+        CheckoutRequest momoRequest = new CheckoutRequest();
+        momoRequest.setAddressId("addr-1");
+        momoRequest.setPaymentMethod(PaymentMethod.MOMO);
+
+        AppException ex = assertThrows(AppException.class, () -> orderService.checkout("user-1", momoRequest));
+        assertEquals(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED, ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("MOMO"));
+    }
 }
