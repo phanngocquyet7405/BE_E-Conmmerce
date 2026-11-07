@@ -65,16 +65,17 @@ public class SecurityConfig {
                     ApiRoutes.Products.PUBLIC_BASE + "/**",
                     ApiRoutes.Categories.PUBLIC_BASE + "/**",
                     ApiRoutes.Brands.PUBLIC_BASE + "/**",
+                    ApiRoutes.Payment.BASE + "/methods",
+                    "/api/v1/payments/methods",
                     "/api/payments/sepay-webhook",
-                    ApiRoutes.Payment.BASE + ApiRoutes.Payment.SEPAY_WEBHOOK,
                     "/uploads/**",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html"
                 ).permitAll()
 
-                // 2. Upload ảnh & Các endpoint thanh toán còn lại yêu cầu authenticated
-                .requestMatchers(ApiRoutes.Media.BASE + "/**").authenticated()
+                // 2. Upload ảnh yêu cầu quyền ADMIN; endpoint thanh toán còn lại yêu cầu authenticated
+                .requestMatchers(ApiRoutes.Media.BASE + "/**").hasRole("ADMIN")
                 .requestMatchers(ApiRoutes.Payment.BASE + "/**").authenticated()
                 .requestMatchers("/api/payments/**").authenticated()
 
@@ -104,16 +105,22 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         List<String> origins = appProperties.getCors().getAllowedOrigins();
+
         if (origins != null && !origins.isEmpty()) {
-            if (origins.contains("*")) {
-                configuration.setAllowedOriginPatterns(List.of("*"));
-            } else {
-                configuration.setAllowedOrigins(origins);
+            List<String> safeOrigins = origins.stream()
+                    .map(String::trim)
+                    .filter(o -> !o.equals("*") && !o.isBlank())
+                    .toList();
+            if (!safeOrigins.isEmpty()) {
+                configuration.setAllowedOrigins(safeOrigins);
             }
         }
+
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "X-Requested-With", "X-SePay-Signature", "X-SePay-Timestamp"));
+        configuration.setExposedHeaders(List.of("Retry-After", "Authorization"));
         configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

@@ -11,14 +11,17 @@ import com.ecommerce.repository.ProductRepository;
 import com.ecommerce.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -32,6 +35,12 @@ public class DataInitializer implements CommandLineRunner {
     private final ProductRepository productRepository;
     private final PasswordEncoder passwordEncoder;
 
+    @Value("${ADMIN_INITIAL_PASSWORD:}")
+    private String adminInitialPassword;
+
+    @Value("${CUSTOMER_INITIAL_PASSWORD:}")
+    private String customerInitialPassword;
+
     @Override
     public void run(String... args) {
         try {
@@ -44,30 +53,52 @@ public class DataInitializer implements CommandLineRunner {
 
     private void initUsers() {
         if (!userRepository.existsByEmail("admin@ecommerce.com")) {
+            String passwordToUse = StringUtils.hasText(adminInitialPassword)
+                    ? adminInitialPassword.trim()
+                    : generateSecureRandomPassword();
+
             User admin = User.builder()
                     .email("admin@ecommerce.com")
-                    .password(passwordEncoder.encode("admin123"))
+                    .password(passwordEncoder.encode(passwordToUse))
                     .fullName("Quản Trị Viên")
                     .phone("0988888888")
                     .roles(Set.of(RoleEnum.ROLE_ADMIN))
                     .active(true)
+                    .emailVerified(true)
                     .build();
             userRepository.save(admin);
-            log.info("=> [DEV] Khởi tạo tài khoản Quản trị viên mẫu: admin@ecommerce.com");
+
+            log.warn("=================================================================");
+            log.warn("=> [SECURITY ALERT] TÀI KHOẢN ADMIN ĐÃ ĐƯỢC KHỞI TẠO:");
+            log.warn("   Email: admin@ecommerce.com");
+            log.warn("   Mật khẩu khởi tạo: [{}]", passwordToUse);
+            log.warn("   Vui lòng lưu lại và đổi mật khẩu ngay sau lần đăng nhập đầu tiên!");
+            log.warn("=================================================================");
         }
 
         if (!userRepository.existsByEmail("customer@ecommerce.com")) {
+            String customerPasswordToUse = StringUtils.hasText(customerInitialPassword)
+                    ? customerInitialPassword.trim()
+                    : generateSecureRandomPassword();
+
             User customer = User.builder()
                     .email("customer@ecommerce.com")
-                    .password(passwordEncoder.encode("customer123"))
+                    .password(passwordEncoder.encode(customerPasswordToUse))
                     .fullName("Khách Hàng Mẫu")
                     .phone("0977777777")
                     .roles(Set.of(RoleEnum.ROLE_CUSTOMER))
                     .active(true)
+                    .emailVerified(true)
                     .build();
             userRepository.save(customer);
-            log.info("=> [DEV] Khởi tạo tài khoản Khách hàng mẫu: customer@ecommerce.com");
+
+            log.info("=> [DEV] Khởi tạo tài khoản Khách hàng mẫu: customer@ecommerce.com với mật khẩu ngẫu nhiên: [{}]",
+                    customerPasswordToUse);
         }
+    }
+
+    private String generateSecureRandomPassword() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
     }
 
     private void initCategoriesAndBrands() {

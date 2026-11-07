@@ -71,7 +71,7 @@ public final class ApiRoutes {
     public static final class Payment {
         private Payment() {}
         public static final String BASE = API_V1 + "/payment";
-        public static final String SEPAY_WEBHOOK = "/sepay/webhook";
+        public static final String METHODS = "/methods";
         public static final String SEPAY_QR_INFO = "/sepay/qr-info/{orderId}";
         public static final String STATUS = "/status/{orderId}";
     }
@@ -81,5 +81,14 @@ public final class ApiRoutes {
         public static final String BASE = API_V1 + "/media";
         public static final String UPLOAD = "/upload";
         public static final String UPLOAD_MULTIPLE = "/upload-multiple";
+    }
+
+    public static final class Statistics {
+        private Statistics() {}
+        public static final String ADMIN_BASE = API_V1 + "/admin/statistics";
+        public static final String OVERVIEW = "/overview";
+        public static final String REVENUE = "/revenue";
+        public static final String TOP_PRODUCTS = "/top-products";
+        public static final String LOW_STOCK = "/low-stock";
     }
 }

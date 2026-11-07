@@ -57,6 +57,35 @@ public class SePayTransaction {
     @Field("raw_body")
     private String rawBody;
 
+    @Builder.Default
+    @Field("status")
+    private SePayTransactionStatus status = SePayTransactionStatus.RECEIVED;
+
+    @Field("order_id")
+    private String orderId;
+
+    @Field("order_code")
+    private String orderCode;
+
+    @Field("amount_discrepancy")
+    private Long amountDiscrepancy;
+
+    @Field("failure_reason")
+    private String failureReason;
+
+    @Field("admin_processed")
+    @Builder.Default
+    private Boolean adminProcessed = false;
+
+    @Field("processed_by")
+    private String processedBy;
+
+    @Field("processed_at")
+    private LocalDateTime processedAt;
+
+    @Field("admin_note")
+    private String adminNote;
+
     @CreatedDate
     @Field("created_at")
     private LocalDateTime createdAt;

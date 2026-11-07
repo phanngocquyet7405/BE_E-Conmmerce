@@ -1,0 +1,35 @@
+version: '3.8'
+
+# ===================================================================
+# Docker Compose: Khởi chạy MongoDB 1-node Replica Set (rs0) trên Local
+# Phục vụ kiểm thử và phát triển tính năng Multi-Document Transactions (@Transactional)
+# Cách chạy: docker compose -f docker-compose.mongo-rs.yml up -d
+# Kiểm tra: mongosh --port 27017 --eval 'rs.status().ok'
+# ===================================================================
+
+services:
+  mongo-replica-set:
+    image: mongo:7.0
+    container_name: mongodb-replica-set
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: ecommerce_dev_db
+    entrypoint: >
+      bash -c "
+        /usr/local/bin/docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all &
+        MONGOPID=$$!
+        echo 'Chờ MongoDB khởi động...'
+        until mongosh --eval 'db.runCommand({ ping: 1 })' > /dev/null 2>&1; do
+          sleep 1
+        done
+        echo 'Khởi tạo Replica Set rs0...'
+        mongosh --eval 'try { rs.status().ok } catch(e) { rs.initiate({_id: \"rs0\", members: [{_id: 0, host: \"localhost:27017\"}]}) }'
+        wait $$MONGOPID
+      "
+    volumes:
+      - mongo-rs-data:/data/db
+
+volumes:
+  mongo-rs-data:

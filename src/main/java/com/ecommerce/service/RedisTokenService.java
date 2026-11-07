@@ -15,4 +15,8 @@ public interface RedisTokenService {
     void saveOtp(String key, String otp, long ttlSeconds);
     String getOtp(String key);
     void deleteOtp(String key);
+
+    // Chống brute-force OTP
+    int incrementOtpAttempts(String key, long ttlSeconds);
+    void resetOtpAttempts(String key);
 }

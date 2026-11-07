@@ -64,6 +64,20 @@ public class Order {
     @Field("final_amount")
     private BigDecimal finalAmount;
 
+    @Field("paid_amount")
+    private BigDecimal paidAmount;
+
+    @Field("amount_discrepancy")
+    private BigDecimal amountDiscrepancy;
+
+    @Field("is_overpaid")
+    @Builder.Default
+    private Boolean isOverpaid = false;
+
+    @Field("is_underpaid")
+    @Builder.Default
+    private Boolean isUnderpaid = false;
+
     @Field("payment_method")
     private PaymentMethod paymentMethod;
 
@@ -83,6 +97,10 @@ public class Order {
 
     @Field("note")
     private String note;
+
+    @Field("stock_restored")
+    @Builder.Default
+    private Boolean stockRestored = false;
 
     @CreatedDate
     @Field("created_at")

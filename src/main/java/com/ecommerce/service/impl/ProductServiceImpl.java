@@ -4,6 +4,7 @@ import com.ecommerce.common.response.PageResponse;
 import com.ecommerce.document.Brand;
 import com.ecommerce.document.Category;
 import com.ecommerce.document.Product;
+import com.ecommerce.dto.request.AdminProductCriteria;
 import com.ecommerce.dto.request.ProductRequest;
 import com.ecommerce.dto.request.ProductSearchCriteria;
 import com.ecommerce.dto.response.ProductResponse;
@@ -28,6 +29,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -41,6 +43,17 @@ public class ProductServiceImpl implements ProductService {
     private final ProductMapper productMapper;
     private final MongoTemplate mongoTemplate;
 
+    private static final Set<String> ALLOWED_SORT_FIELDS = Set.of(
+            "id", "name", "price", "stockQuantity", "stock_quantity", "createdAt", "created_at", "updatedAt"
+    );
+
+    public static String validateSortBy(String sortBy) {
+        if (StringUtils.hasText(sortBy) && ALLOWED_SORT_FIELDS.contains(sortBy)) {
+            return sortBy;
+        }
+        return "createdAt";
+    }
+
     @Override
     public PageResponse<ProductResponse> getActiveProducts(Pageable pageable) {
         Page<ProductResponse> page = productRepository
@@ -49,8 +62,27 @@ public class ProductServiceImpl implements ProductService {
         return PageResponse.fromPage(page);
     }
 
+    /**
+     * Public API: Xem chi tiết sản phẩm. Nếu sản phẩm bị ẩn (active = false) thì trả 404 PRODUCT_NOT_FOUND.
+     */
     @Override
     public ProductResponse getProductById(String id) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        if (!Boolean.TRUE.equals(product.getActive())) {
+            log.info("Khách hàng truy cập sản phẩm đang bị ẩn: id={}", id);
+            throw new AppException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
+
+        return productMapper.toResponse(product);
+    }
+
+    /**
+     * Admin API: Xem chi tiết sản phẩm dành cho quản trị viên (kể cả sản phẩm đang bị ẩn).
+     */
+    @Override
+    public ProductResponse getProductByIdForAdmin(String id) {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
         return productMapper.toResponse(product);
@@ -114,6 +146,16 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
+    public ProductResponse updateProductStatus(String id, boolean active) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
+        product.setActive(active);
+        Product saved = productRepository.save(product);
+        log.info("Admin cập nhật trạng thái sản phẩm: id={}, active={}", id, active);
+        return productMapper.toResponse(saved);
+    }
+
+    @Override
     public void deleteProduct(String id) {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
@@ -163,10 +205,65 @@ public class ProductServiceImpl implements ProductService {
         int validatedSize = Math.min(Math.max(criteria.getSize(), 1), 50);
         int validatedPage = Math.max(criteria.getPage(), 0);
 
-        String sortBy = StringUtils.hasText(criteria.getSortBy()) ? criteria.getSortBy() : "createdAt";
+        String safeSortBy = validateSortBy(criteria.getSortBy());
         Sort sort = "asc".equalsIgnoreCase(criteria.getSortDir())
-                ? Sort.by(sortBy).ascending()
-                : Sort.by(sortBy).descending();
+                ? Sort.by(safeSortBy).ascending()
+                : Sort.by(safeSortBy).descending();
+        Pageable pageable = PageRequest.of(validatedPage, validatedSize, sort);
+        query.with(pageable);
+
+        List<Product> products = mongoTemplate.find(query, Product.class);
+        List<ProductResponse> responses = products.stream().map(productMapper::toResponse).toList();
+        Page<ProductResponse> page = new PageImpl<>(responses, pageable, totalElements);
+
+        return PageResponse.fromPage(page);
+    }
+
+    @Override
+    public PageResponse<ProductResponse> getProductsForAdmin(AdminProductCriteria criteria) {
+        Query query = new Query();
+
+        // 1. Lọc theo active (nếu truyền; nếu không truyền thì lấy tất cả gồm cả sản phẩm ẩn)
+        if (criteria.getActive() != null) {
+            query.addCriteria(Criteria.where("active").is(criteria.getActive()));
+        }
+
+        // 2. Tìm kiếm từ khóa (name, sku, description, brand_name) với Pattern.quote
+        if (StringUtils.hasText(criteria.getKeyword())) {
+            String safeRegex = ".*" + Pattern.quote(criteria.getKeyword().trim()) + ".*";
+            query.addCriteria(new Criteria().orOperator(
+                    Criteria.where("name").regex(safeRegex, "i"),
+                    Criteria.where("sku").regex(safeRegex, "i"),
+                    Criteria.where("description").regex(safeRegex, "i"),
+                    Criteria.where("brand_name").regex(safeRegex, "i")
+            ));
+        }
+
+        // 3. Lọc theo danh mục
+        if (StringUtils.hasText(criteria.getCategoryId())) {
+            query.addCriteria(Criteria.where("category_id").is(criteria.getCategoryId()));
+        }
+
+        // 4. Lọc theo thương hiệu
+        if (StringUtils.hasText(criteria.getBrandId())) {
+            query.addCriteria(Criteria.where("brand_id").is(criteria.getBrandId()));
+        }
+
+        // 5. Lọc sản phẩm sắp hết hàng (lowStock)
+        if (Boolean.TRUE.equals(criteria.getLowStock())) {
+            int threshold = criteria.getLowStockThreshold() != null ? criteria.getLowStockThreshold() : 10;
+            query.addCriteria(Criteria.where("stock_quantity").lte(threshold));
+        }
+
+        long totalElements = mongoTemplate.count(query, Product.class);
+
+        int validatedSize = Math.min(Math.max(criteria.getSize(), 1), 50);
+        int validatedPage = Math.max(criteria.getPage(), 0);
+
+        String safeSortBy = validateSortBy(criteria.getSortBy());
+        Sort sort = "asc".equalsIgnoreCase(criteria.getSortDir())
+                ? Sort.by(safeSortBy).ascending()
+                : Sort.by(safeSortBy).descending();
         Pageable pageable = PageRequest.of(validatedPage, validatedSize, sort);
         query.with(pageable);
 

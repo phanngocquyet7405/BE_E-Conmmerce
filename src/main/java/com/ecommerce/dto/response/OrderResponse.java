@@ -26,6 +26,10 @@ public class OrderResponse {
     private final BigDecimal totalAmount;
     private final BigDecimal shippingFee;
     private final BigDecimal finalAmount;
+    private final BigDecimal paidAmount;
+    private final BigDecimal amountDiscrepancy;
+    private final Boolean isOverpaid;
+    private final Boolean isUnderpaid;
     private final PaymentMethod paymentMethod;
     private final PaymentStatus paymentStatus;
     private final Instant paidAt;

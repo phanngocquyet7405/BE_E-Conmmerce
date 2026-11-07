@@ -51,6 +51,12 @@ class OrderServiceTest {
     @Mock
     private MongoTemplate mongoTemplate;
 
+    @Mock
+    private SePayService sePayService;
+
+    @Mock
+    private com.ecommerce.repository.SePayTransactionRepository sePayTransactionRepository;
+
     @InjectMocks
     private OrderServiceImpl orderService;
 
@@ -131,7 +137,7 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("Checkout thất bại khi sản phẩm hết hàng: Ném INSUFFICIENT_STOCK và để Transaction tự rollback")
+    @DisplayName("Checkout thất bại khi sản phẩm hết hàng: Ném INSUFFICIENT_STOCK và thực hiện bù tồn kho (compensating rollback)")
     void checkout_InsufficientStock_RollsBackAndThrowsException() {
         CartItem item1 = CartItem.builder()
                 .productId("prod-1")
@@ -182,8 +188,8 @@ class OrderServiceTest {
 
         assertEquals(ErrorCode.INSUFFICIENT_STOCK, exception.getErrorCode());
 
-        // Đã bỏ bù kho thủ công (vì Transaction tự rollback), không được gọi updateFirst
-        verify(mongoTemplate, never()).updateFirst(any(Query.class), any(Update.class), eq(Product.class));
+        // Cơ chế bù tồn kho (Compensating Rollback): phải gọi updateFirst đúng 1 lần cho prod-1
+        verify(mongoTemplate, times(1)).updateFirst(any(Query.class), any(Update.class), eq(Product.class));
 
         // Đơn hàng KHÔNG được lưu và giỏ hàng KHÔNG bị xóa
         verify(orderRepository, never()).save(any(Order.class));
@@ -241,5 +247,38 @@ class OrderServiceTest {
 
         assertEquals(ErrorCode.CART_EMPTY, exception.getErrorCode());
         verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Checkout ném PAYMENT_METHOD_NOT_SUPPORTED khi chọn MOMO, VNPAY hoặc BANKING")
+    void checkout_UnsupportedPaymentMethod_ThrowsException() {
+        CartItem item = CartItem.builder()
+                .productId("prod-1")
+                .productName("Sản phẩm")
+                .unitPrice(BigDecimal.valueOf(50000))
+                .quantity(1)
+                .build();
+        testCart.getItems().add(item);
+
+        Product dbProduct = Product.builder()
+                .id("prod-1")
+                .name("Sản phẩm")
+                .sku("SKU-1")
+                .price(BigDecimal.valueOf(50000))
+                .stockQuantity(10)
+                .active(true)
+                .build();
+
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(testUser));
+        when(cartRepository.findByUserId("user-1")).thenReturn(Optional.of(testCart));
+        when(mongoTemplate.findAndModify(any(), any(), any(), eq(Product.class))).thenReturn(dbProduct);
+
+        CheckoutRequest momoRequest = new CheckoutRequest();
+        momoRequest.setAddressId("addr-1");
+        momoRequest.setPaymentMethod(PaymentMethod.MOMO);
+
+        AppException ex = assertThrows(AppException.class, () -> orderService.checkout("user-1", momoRequest));
+        assertEquals(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED, ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("MOMO"));
     }
 }

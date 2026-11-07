@@ -15,7 +15,6 @@ public class AppProperties {
 
     private final Jwt jwt = new Jwt();
     private final Cors cors = new Cors();
-    private final Sepay sepay = new Sepay();
     private final Brevo brevo = new Brevo();
 
     @Getter
@@ -32,16 +31,6 @@ public class AppProperties {
     @Setter
     public static class Cors {
         private List<String> allowedOrigins;
-    }
-
-    @Getter
-    @Setter
-    public static class Sepay {
-        private String apiKey;
-        private String accountNumber;
-        private String bankName;
-        private String accountHolder;
-        private String qrTemplate = "compact";
     }
 
     @Getter

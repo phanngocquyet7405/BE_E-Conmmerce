@@ -1,26 +1,30 @@
 package com.ecommerce.service.impl;
 
-import com.ecommerce.config.AppProperties;
+import com.ecommerce.common.response.PageResponse;
 import com.ecommerce.document.Order;
-import com.ecommerce.document.OrderStatus;
 import com.ecommerce.document.PaymentMethod;
-import com.ecommerce.document.PaymentStatus;
-import com.ecommerce.dto.request.SePayWebhookRequest;
+import com.ecommerce.document.SePayTransaction;
+import com.ecommerce.document.SePayTransactionStatus;
+import com.ecommerce.dto.request.AdminProcessTransactionRequest;
+import com.ecommerce.dto.response.PaymentMethodResponse;
 import com.ecommerce.dto.response.PaymentQrResponse;
 import com.ecommerce.dto.response.PaymentStatusResponse;
+import com.ecommerce.dto.response.SePayTransactionResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.repository.OrderRepository;
+import com.ecommerce.repository.SePayTransactionRepository;
 import com.ecommerce.service.PaymentService;
+import com.ecommerce.service.SePayService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -28,31 +32,36 @@ import java.time.Instant;
 public class PaymentServiceImpl implements PaymentService {
 
     private final OrderRepository orderRepository;
-    private final AppProperties appProperties;
+    private final SePayService sePayService;
+    private final SePayTransactionRepository sePayTransactionRepository;
 
     @Override
-    public PaymentQrResponse getPaymentQrInfo(String orderId) {
+    public PaymentQrResponse getPaymentQrInfo(String userId, boolean isAdmin, String orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
 
-        String accNumber = appProperties.getSepay().getAccountNumber();
-        String bank = appProperties.getSepay().getBankName();
-        String holder = appProperties.getSepay().getAccountHolder();
-        String template = appProperties.getSepay().getQrTemplate();
+        // Phòng chống IDOR: Nếu không phải Admin và không phải chủ đơn hàng thì ném ORDER_NOT_FOUND
+        if (!isAdmin && (userId == null || !order.getUserId().equals(userId))) {
+            log.warn("Cảnh báo IDOR: User {} cố gắng truy cập thông tin thanh toán của đơn hàng {} (thuộc về {})",
+                    userId, orderId, order.getUserId());
+            throw new AppException(ErrorCode.ORDER_NOT_FOUND);
+        }
+
+        String accNumber = sePayService.getBankAccount();
+        String bank = sePayService.getBankId();
+        String holder = sePayService.getAccountHolder();
 
         String transferContent = order.getOrderCode();
         BigDecimal amount = order.getFinalAmount();
 
-        // Định dạng VietQR SePay: https://qr.sepay.vn/img?acc=...&bank=...&amount=...&des=...
-        String encodedContent = URLEncoder.encode(transferContent, StandardCharsets.UTF_8);
-        String qrImageUrl = String.format(
-                "https://qr.sepay.vn/img?acc=%s&bank=%s&amount=%s&des=%s&template=%s",
-                accNumber, bank, amount.toBigInteger().toString(), encodedContent, template
-        );
+        // Sử dụng SePayService định dạng chuẩn VietQR SePay:
+        // https://qr.sepay.vn/img?acc={bank-id}-{bank-account}&template=compact&amount={amount}&des={orderCode}
+        long amountValue = amount != null ? amount.longValue() : 0L;
+        String qrImageUrl = sePayService.buildQrUrl(amountValue, transferContent);
 
         String instruction = String.format(
                 "Vui lòng quét mã QR hoặc chuyển khoản chính xác số tiền %s đ vào tài khoản %s (%s) với nội dung: %s",
-                amount.toBigInteger(), accNumber, bank, transferContent
+                amount != null ? amount.toBigInteger() : 0, accNumber, bank, transferContent
         );
 
         return PaymentQrResponse.builder()
@@ -71,9 +80,16 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public PaymentStatusResponse checkPaymentStatus(String orderId) {
+    public PaymentStatusResponse checkPaymentStatus(String userId, boolean isAdmin, String orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+        // Phòng chống IDOR: Nếu không phải Admin và không phải chủ đơn hàng thì ném ORDER_NOT_FOUND
+        if (!isAdmin && (userId == null || !order.getUserId().equals(userId))) {
+            log.warn("Cảnh báo IDOR: User {} cố gắng kiểm tra trạng thái thanh toán của đơn hàng {} (thuộc về {})",
+                    userId, orderId, order.getUserId());
+            throw new AppException(ErrorCode.ORDER_NOT_FOUND);
+        }
 
         return PaymentStatusResponse.builder()
                 .orderId(order.getId())
@@ -82,64 +98,60 @@ public class PaymentServiceImpl implements PaymentService {
                 .orderStatus(order.getStatus())
                 .paidAt(order.getPaidAt())
                 .sepayTransactionId(order.getSepayTransactionId())
+                .finalAmount(order.getFinalAmount() != null ? order.getFinalAmount() : BigDecimal.ZERO)
+                .paidAmount(order.getPaidAmount() != null ? order.getPaidAmount() : BigDecimal.ZERO)
+                .amountDiscrepancy(order.getAmountDiscrepancy() != null ? order.getAmountDiscrepancy() : BigDecimal.ZERO)
+                .isOverpaid(Boolean.TRUE.equals(order.getIsOverpaid()))
+                .isUnderpaid(Boolean.TRUE.equals(order.getIsUnderpaid()))
                 .build();
     }
 
     @Override
-    public void processSepayWebhook(String authHeader, SePayWebhookRequest request) {
-        log.info("Nhận Webhook từ SePay: id={}, transferAmount={}, content={}, referenceCode={}",
-                request.getId(), request.getTransferAmount(), request.getContent(), request.getReferenceCode());
+    public List<PaymentMethodResponse> getAvailablePaymentMethods() {
+        return List.of(
+                PaymentMethodResponse.builder()
+                        .code(PaymentMethod.COD)
+                        .name("Thanh toán khi nhận hàng (COD)")
+                        .enabled(true)
+                        .description("Thanh toán tiền mặt cho shipper khi nhận hàng.")
+                        .condition("Áp dụng cho mọi đơn hàng.")
+                        .build(),
+                PaymentMethodResponse.builder()
+                        .code(PaymentMethod.SEPAY)
+                        .name("Chuyển khoản VietQR qua SePay")
+                        .enabled(true)
+                        .description("Quét mã QR VietQR chuyển khoản tự động xác nhận tức thì qua SePay.")
+                        .condition("Thời hạn giữ đơn và chuyển khoản là 15 phút.")
+                        .build()
+        );
+    }
 
-        // 1. Xác thực API Key nếu được cấu hình
-        String configuredApiKey = appProperties.getSepay().getApiKey();
-        if (StringUtils.hasText(configuredApiKey)) {
-            String expectedBearer = "Apikey " + configuredApiKey;
-            if (!expectedBearer.equals(authHeader) && !configuredApiKey.equals(authHeader)) {
-                log.warn("SePay Webhook từ chối: Sai API Key trong header Authorization");
-                throw new AppException(ErrorCode.ACCESS_DENIED, "Chữ ký SePay Webhook không hợp lệ");
-            }
+    @Override
+    public PageResponse<SePayTransactionResponse> getTransactionsForAdmin(SePayTransactionStatus status, Pageable pageable) {
+        Page<SePayTransaction> page = (status != null)
+                ? sePayTransactionRepository.findByStatusOrderByCreatedAtDesc(status, pageable)
+                : sePayTransactionRepository.findAllByOrderByCreatedAtDesc(pageable);
+        return PageResponse.fromPage(page.map(SePayTransactionResponse::fromEntity));
+    }
+
+    @Override
+    public SePayTransactionResponse processTransactionForAdmin(String adminEmail, String transactionId, AdminProcessTransactionRequest request) {
+        SePayTransaction tx = sePayTransactionRepository.findById(transactionId)
+                .orElseThrow(() -> new AppException(ErrorCode.INTERNAL_SERVER_ERROR, "Không tìm thấy giao dịch với ID: " + transactionId));
+
+        tx.setAdminProcessed(true);
+        tx.setProcessedBy(adminEmail != null ? adminEmail : "ADMIN");
+        tx.setProcessedAt(LocalDateTime.now());
+        tx.setAdminNote(request.getNote());
+
+        if ("REFUNDED".equalsIgnoreCase(request.getAction())) {
+            tx.setStatus(SePayTransactionStatus.PROCESSED);
+        } else if ("RESOLVED".equalsIgnoreCase(request.getAction())) {
+            tx.setStatus(SePayTransactionStatus.PROCESSED);
         }
 
-        // 2. Trích xuất mã đơn hàng từ nội dung chuyển khoản (content hoặc description)
-        String content = request.getContent() != null ? request.getContent() : request.getDescription();
-        if (!StringUtils.hasText(content)) {
-            log.warn("Nội dung chuyển khoản SePay rỗng, bỏ qua");
-            return;
-        }
-
-        // Tìm kiếm chuỗi ORD- trong content
-        String matchedOrderCode = null;
-        for (String word : content.replaceAll("[^a-zA-Z0-9-]", " ").split("\\s+")) {
-            if (word.toUpperCase().startsWith("ORD-")) {
-                matchedOrderCode = word.trim().toUpperCase();
-                break;
-            }
-        }
-
-        if (matchedOrderCode == null) {
-            log.warn("Không tìm thấy mã đơn hàng ORD- trong nội dung: {}", content);
-            return;
-        }
-
-        Order order = orderRepository.findByOrderCode(matchedOrderCode).orElse(null);
-        if (order == null) {
-            log.warn("Đơn hàng với mã {} không tồn tại trong hệ thống", matchedOrderCode);
-            return;
-        }
-
-        // 3. Đối soát số tiền thanh toán
-        if (request.getTransferAmount() != null && BigDecimal.valueOf(request.getTransferAmount()).compareTo(order.getFinalAmount()) >= 0) {
-            order.setPaymentStatus(PaymentStatus.PAID);
-            order.setPaidAt(Instant.now());
-            order.setSepayTransactionId(String.valueOf(request.getId()));
-            if (order.getStatus() == OrderStatus.PENDING) {
-                order.setStatus(OrderStatus.CONFIRMED);
-            }
-            orderRepository.save(order);
-            log.info("==> Thanh toán SePay THÀNH CÔNG cho đơn hàng: {}. Đã chuyển sang PAID/CONFIRMED", matchedOrderCode);
-        } else {
-            log.warn("Số tiền chuyển khoản ({}) nhỏ hơn tổng tiền đơn hàng ({}) cho đơn {}",
-                    request.getTransferAmount(), order.getFinalAmount(), matchedOrderCode);
-        }
+        SePayTransaction saved = sePayTransactionRepository.save(tx);
+        log.info("Admin {} đã xử lý giao dịch SePay {}: action={}, note={}", adminEmail, tx.getSepayId(), request.getAction(), request.getNote());
+        return SePayTransactionResponse.fromEntity(saved);
     }
 }

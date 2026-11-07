@@ -18,6 +18,7 @@ public enum ErrorCode {
     EMAIL_ALREADY_EXISTS(1007, "Email này đã được đăng ký tài khoản", HttpStatus.CONFLICT),
     PASSWORD_NOT_MATCH(1008, "Mật khẩu hiện tại không chính xác", HttpStatus.BAD_REQUEST),
     ACCOUNT_NOT_ACTIVATED(1009, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email", HttpStatus.FORBIDDEN),
+    USER_NOT_ACTIVATED(1009, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email", HttpStatus.FORBIDDEN),
 
     // 2xxx: Validation & Request
     VALIDATION_ERROR(2001, "Dữ liệu gửi lên không thỏa mãn yêu cầu", HttpStatus.BAD_REQUEST),
@@ -42,6 +43,9 @@ public enum ErrorCode {
     ORDER_NOT_FOUND(5001, "Không tìm thấy đơn hàng yêu cầu", HttpStatus.NOT_FOUND),
     ORDER_CANNOT_BE_CANCELLED(5002, "Đơn hàng đã được xử lý/vận chuyển, không thể hủy", HttpStatus.BAD_REQUEST),
     INVALID_ORDER_STATUS_TRANSITION(5003, "Chuyển trạng thái đơn hàng không hợp lệ", HttpStatus.BAD_REQUEST),
+    PAYMENT_METHOD_NOT_SUPPORTED(5004, "Phương thức thanh toán không được hỗ trợ hoặc chưa tích hợp", HttpStatus.BAD_REQUEST),
+    PAYMENT_REQUIRED_BEFORE_SHIPPING(5005, "Đơn hàng chưa thanh toán (PAID), không thể chuyển sang giao hàng", HttpStatus.BAD_REQUEST),
+    ORDER_ALREADY_REFUNDED(5006, "Đơn hàng đã được hoàn tiền trước đó", HttpStatus.BAD_REQUEST),
 
     // 9xxx: System
     INTERNAL_SERVER_ERROR(9999, "Lỗi hệ thống máy chủ, vui lòng thử lại sau", HttpStatus.INTERNAL_SERVER_ERROR);

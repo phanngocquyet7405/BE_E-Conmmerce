@@ -1,24 +1,31 @@
 package com.ecommerce.service.impl;
 
 import com.ecommerce.common.response.PageResponse;
-import com.ecommerce.config.AppProperties;
 import com.ecommerce.document.*;
+import com.ecommerce.dto.request.AdminOrderCriteria;
 import com.ecommerce.dto.request.CheckoutRequest;
 import com.ecommerce.dto.request.UpdateOrderStatusRequest;
+import com.ecommerce.dto.response.AdminOrderDetailResponse;
 import com.ecommerce.dto.response.OrderResponse;
+import com.ecommerce.dto.response.SePayTransactionResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.repository.CartRepository;
 import com.ecommerce.repository.OrderRepository;
 import com.ecommerce.repository.ProductRepository;
+import com.ecommerce.repository.SePayTransactionRepository;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.service.OrderService;
+import com.ecommerce.service.SePayService;
 import com.mongodb.MongoException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -28,14 +35,15 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -46,12 +54,16 @@ public class OrderServiceImpl implements OrderService {
     private final CartRepository cartRepository;
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
+    private final SePayTransactionRepository sePayTransactionRepository;
     private final MongoTemplate mongoTemplate;
-    private final AppProperties appProperties;
+    private final SePayService sePayService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Autowired(required = false)
     private MongoTransactionManager transactionManager;
+
+    @Value("${app.order.shipping-fee:30000}")
+    private BigDecimal configuredShippingFee;
 
     private static final int MAX_TRANSACTION_RETRY_ATTEMPTS = 3;
 
@@ -104,74 +116,106 @@ public class OrderServiceImpl implements OrderService {
         }
 
         List<OrderItem> orderItems = new ArrayList<>();
+        List<OrderItem> decrementedItems = new ArrayList<>();
         BigDecimal totalAmount = BigDecimal.ZERO;
 
-        for (CartItem cartItem : cart.getItems()) {
-            // Trừ tồn kho nguyên tử (Atomic Check-and-Set) chống bán vượt tồn kho (Overselling)
-            Query query = new Query(Criteria.where("_id").is(cartItem.getProductId())
-                    .and("stock_quantity").gte(cartItem.getQuantity())
-                    .and("active").is(true));
-            Update update = new Update().inc("stock_quantity", -cartItem.getQuantity());
+        try {
+            for (CartItem cartItem : cart.getItems()) {
+                // Trừ tồn kho nguyên tử (Atomic Check-and-Set) chống bán vượt tồn kho (Overselling)
+                Query query = new Query(Criteria.where("_id").is(cartItem.getProductId())
+                        .and("stock_quantity").gte(cartItem.getQuantity())
+                        .and("active").is(true));
+                Update update = new Update().inc("stock_quantity", -cartItem.getQuantity());
 
-            Product product = mongoTemplate.findAndModify(
-                    query, update, FindAndModifyOptions.options().returnNew(false), Product.class);
+                Product product = mongoTemplate.findAndModify(
+                        query, update, FindAndModifyOptions.options().returnNew(false), Product.class);
 
-            if (product == null) {
-                Product existing = productRepository.findById(cartItem.getProductId()).orElse(null);
-                if (existing == null) {
-                    throw new AppException(ErrorCode.PRODUCT_NOT_FOUND);
+                if (product == null) {
+                    Product existing = productRepository.findById(cartItem.getProductId()).orElse(null);
+                    if (existing == null) {
+                        throw new AppException(ErrorCode.PRODUCT_NOT_FOUND);
+                    }
+                    throw new AppException(ErrorCode.INSUFFICIENT_STOCK,
+                            "Sản phẩm '" + existing.getName() + "' không đủ số lượng trong kho");
                 }
-                throw new AppException(ErrorCode.INSUFFICIENT_STOCK,
-                        "Sản phẩm '" + existing.getName() + "' không đủ số lượng trong kho");
+
+                BigDecimal itemTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
+                totalAmount = totalAmount.add(itemTotal);
+
+                OrderItem orderItem = OrderItem.builder()
+                        .productId(product.getId())
+                        .productName(product.getName())
+                        .sku(product.getSku())
+                        .price(product.getPrice())
+                        .quantity(cartItem.getQuantity())
+                        .thumbnailUrl(product.getThumbnailUrl())
+                        .subTotal(itemTotal)
+                        .build();
+
+                orderItems.add(orderItem);
+                decrementedItems.add(orderItem);
             }
 
-            BigDecimal itemTotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
-            totalAmount = totalAmount.add(itemTotal);
+            BigDecimal shippingFee = (configuredShippingFee != null)
+                    ? configuredShippingFee
+                    : BigDecimal.valueOf(30000);
+            BigDecimal finalAmount = totalAmount.add(shippingFee);
 
-            orderItems.add(OrderItem.builder()
-                    .productId(product.getId())
-                    .productName(product.getName())
-                    .sku(product.getSku())
-                    .price(product.getPrice())
-                    .quantity(cartItem.getQuantity())
-                    .thumbnailUrl(product.getThumbnailUrl())
-                    .subTotal(itemTotal)
-                    .build());
+            // Sinh mã đơn hàng dạng prefix + 8 số ngẫu nhiên (vd: BETES12345678)
+            String orderCode = generateUniqueOrderCode();
+
+            PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
+
+            // Kiểm tra phương thức thanh toán hợp lệ (Theo D1: Chỉ cho phép COD và SEPAY, VNPAY/MOMO/BANKING bị từ chối rõ ràng)
+            if (paymentMethod != PaymentMethod.COD && paymentMethod != PaymentMethod.SEPAY) {
+                if (paymentMethod == PaymentMethod.MOMO || paymentMethod == PaymentMethod.VNPAY) {
+                    throw new AppException(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED,
+                            "Phương thức thanh toán ví điện tử " + paymentMethod + " hiện chưa được tích hợp.");
+                }
+                if (paymentMethod == PaymentMethod.BANKING) {
+                    throw new AppException(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED,
+                            "Chuyển khoản thủ công (BANKING) hiện không khả dụng. Vui lòng chọn SEPAY để quét mã VietQR tự động.");
+                }
+                throw new AppException(ErrorCode.PAYMENT_METHOD_NOT_SUPPORTED,
+                        "Phương thức thanh toán " + paymentMethod + " không được hỗ trợ.");
+            }
+
+            Order order = Order.builder()
+                    .orderCode(orderCode)
+                    .userId(userId)
+                    .customerName(user.getFullName())
+                    .customerEmail(user.getEmail())
+                    .customerPhone(user.getPhone())
+                    .shippingAddress(shippingAddress)
+                    .items(orderItems)
+                    .totalAmount(totalAmount)
+                    .shippingFee(shippingFee)
+                    .finalAmount(finalAmount)
+                    .paymentMethod(paymentMethod)
+                    .paymentStatus(PaymentStatus.UNPAID)
+                    .status(OrderStatus.PENDING)
+                    .note(request.getNote())
+                    .build();
+
+            Order savedOrder = orderRepository.save(order);
+
+            // Xóa giỏ hàng sau khi đặt thành công
+            cart.getItems().clear();
+            cartRepository.save(cart);
+
+            log.info("Khách hàng {} đặt thành công đơn hàng: {}, Tổng tiền: {}", userId, orderCode, finalAmount);
+            return mapToOrderResponse(savedOrder);
+
+        } catch (Exception ex) {
+            // Cơ chế bù tồn kho (Compensating Stock Rollback):
+            // Hoàn lại số lượng đã trừ cho các sản phẩm đã trừ thành công trước khi phát sinh lỗi
+            if (!decrementedItems.isEmpty()) {
+                log.warn("Phát sinh lỗi trong quá trình checkout ({}). Đang thực hiện hoàn tồn kho bù cho {} mặt hàng...",
+                        ex.getMessage(), decrementedItems.size());
+                restoreProductStock(decrementedItems);
+            }
+            throw ex;
         }
-
-        BigDecimal shippingFee = BigDecimal.valueOf(30000);
-        BigDecimal finalAmount = totalAmount.add(shippingFee);
-
-        // Sinh mã đơn hàng dạng BETES + 8 số ngẫu nhiên (vd: BETES12345678)
-        String orderCode = generateUniqueOrderCode();
-
-        PaymentMethod paymentMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.COD;
-
-        Order order = Order.builder()
-                .orderCode(orderCode)
-                .userId(userId)
-                .customerName(user.getFullName())
-                .customerEmail(user.getEmail())
-                .customerPhone(user.getPhone())
-                .shippingAddress(shippingAddress)
-                .items(orderItems)
-                .totalAmount(totalAmount)
-                .shippingFee(shippingFee)
-                .finalAmount(finalAmount)
-                .paymentMethod(paymentMethod)
-                .paymentStatus(PaymentStatus.UNPAID)
-                .status(OrderStatus.PENDING)
-                .note(request.getNote())
-                .build();
-
-        Order savedOrder = orderRepository.save(order);
-
-        // Xóa giỏ hàng sau khi đặt thành công
-        cart.getItems().clear();
-        cartRepository.save(cart);
-
-        log.info("Khách hàng {} đặt thành công đơn hàng: {}, Tổng tiền: {}", userId, orderCode, finalAmount);
-        return mapToOrderResponse(savedOrder);
     }
 
     private boolean isTransientTransactionError(Throwable ex) {
@@ -209,30 +253,44 @@ public class OrderServiceImpl implements OrderService {
         return PageResponse.fromPage(page);
     }
 
+    /**
+     * Hủy đơn hàng nguyên tử (Chống Race Condition):
+     * Chỉ hủy khi đơn hàng ở trạng thái PENDING và UNPAID.
+     * CHỈ hoàn tồn kho khi thao tác cập nhật nguyên tử khớp và thành công.
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public OrderResponse cancelOrder(String userId, String orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+        Query query = Query.query(Criteria.where("_id").is(orderId)
+                .and("userId").is(userId)
+                .and("status").is(OrderStatus.PENDING)
+                .and("paymentStatus").is(PaymentStatus.UNPAID));
 
-        if (!order.getUserId().equals(userId)) {
-            throw new AppException(ErrorCode.ACCESS_DENIED);
+        Update update = new Update()
+                .set("status", OrderStatus.CANCELLED)
+                .set("stockRestored", true)
+                .set("updatedAt", Instant.now());
+
+        Order cancelledOrder = mongoTemplate.findAndModify(query, update,
+                FindAndModifyOptions.options().returnNew(true), Order.class);
+
+        if (cancelledOrder == null) {
+            Order existing = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+            if (!existing.getUserId().equals(userId)) {
+                throw new AppException(ErrorCode.ACCESS_DENIED);
+            }
+
+            throw new AppException(ErrorCode.ORDER_CANNOT_BE_CANCELLED,
+                    "Đơn hàng không ở trạng thái PENDING/UNPAID để hủy (Hiện tại: "
+                            + existing.getStatus() + ", Thanh toán: " + existing.getPaymentStatus() + ")");
         }
 
-        if (order.getStatus() != OrderStatus.PENDING) {
-            throw new AppException(ErrorCode.ORDER_CANNOT_BE_CANCELLED);
-        }
-
-        order.setStatus(OrderStatus.CANCELLED);
-        if (order.getPaymentStatus() == PaymentStatus.PAID) {
-            order.setPaymentStatus(PaymentStatus.REFUNDED);
-        }
-
-        restoreProductStock(order.getItems());
-
-        Order saved = orderRepository.save(order);
-        log.info("Khách hàng {} đã hủy đơn hàng {}", userId, order.getOrderCode());
-        return mapToOrderResponse(saved);
+        // CHỈ hoàn lại tồn kho khi cập nhật nguyên tử thành công
+        restoreProductStock(cancelledOrder.getItems());
+        log.info("Khách hàng {} đã hủy thành công đơn hàng {}", userId, cancelledOrder.getOrderCode());
+        return mapToOrderResponse(cancelledOrder);
     }
 
     @Override
@@ -244,6 +302,91 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    public PageResponse<OrderResponse> getOrdersForAdmin(AdminOrderCriteria criteria) {
+        if (criteria == null) {
+            criteria = AdminOrderCriteria.builder().build();
+        }
+
+        int page = Math.max(criteria.getPage(), 0);
+        int size = Math.min(Math.max(criteria.getSize(), 1), 50);
+
+        String sortBy = validateSortBy(criteria.getSortBy());
+        Sort.Direction direction = "asc".equalsIgnoreCase(criteria.getSortDir())
+                ? Sort.Direction.ASC
+                : Sort.Direction.DESC;
+
+        Query query = new Query();
+
+        if (criteria.getStatus() != null) {
+            query.addCriteria(Criteria.where("status").is(criteria.getStatus()));
+        }
+
+        if (criteria.getPaymentStatus() != null) {
+            query.addCriteria(Criteria.where("paymentStatus").is(criteria.getPaymentStatus()));
+        }
+
+        if (criteria.getPaymentMethod() != null) {
+            query.addCriteria(Criteria.where("paymentMethod").is(criteria.getPaymentMethod()));
+        }
+
+        if (criteria.getFrom() != null && criteria.getTo() != null) {
+            query.addCriteria(Criteria.where("createdAt").gte(criteria.getFrom()).lte(criteria.getTo()));
+        } else if (criteria.getFrom() != null) {
+            query.addCriteria(Criteria.where("createdAt").gte(criteria.getFrom()));
+        } else if (criteria.getTo() != null) {
+            query.addCriteria(Criteria.where("createdAt").lte(criteria.getTo()));
+        }
+
+        if (criteria.getKeyword() != null && !criteria.getKeyword().trim().isEmpty()) {
+            String pattern = Pattern.quote(criteria.getKeyword().trim());
+            query.addCriteria(new Criteria().orOperator(
+                    Criteria.where("orderCode").regex(pattern, "i"),
+                    Criteria.where("customerPhone").regex(pattern, "i"),
+                    Criteria.where("customerEmail").regex(pattern, "i")
+            ));
+        }
+
+        long total = mongoTemplate.count(query, Order.class);
+
+        query.with(PageRequest.of(page, size, Sort.by(direction, sortBy)));
+        List<Order> orders = mongoTemplate.find(query, Order.class);
+
+        List<OrderResponse> content = orders.stream()
+                .map(this::mapToOrderResponse)
+                .toList();
+
+        Page<OrderResponse> pageResult = new org.springframework.data.domain.PageImpl<>(
+                content, PageRequest.of(page, size), total);
+        return PageResponse.fromPage(pageResult);
+    }
+
+    private String validateSortBy(String sortBy) {
+        if (sortBy == null) return "createdAt";
+        return switch (sortBy) {
+            case "createdAt", "finalAmount", "totalAmount", "status", "paymentStatus" -> sortBy;
+            default -> "createdAt";
+        };
+    }
+
+    @Override
+    public AdminOrderDetailResponse getOrderDetailForAdmin(String orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+        List<SePayTransaction> transactions = sePayTransactionRepository
+                .findByOrderCodeOrderByCreatedAtDesc(order.getOrderCode());
+
+        List<SePayTransactionResponse> txResponses = transactions.stream()
+                .map(SePayTransactionResponse::fromEntity)
+                .toList();
+
+        return AdminOrderDetailResponse.builder()
+                .order(mapToOrderResponse(order))
+                .transactions(txResponses)
+                .build();
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public OrderResponse updateOrderStatus(String orderId, UpdateOrderStatusRequest request) {
         Order order = orderRepository.findById(orderId)
@@ -252,26 +395,165 @@ public class OrderServiceImpl implements OrderService {
         OrderStatus current = order.getStatus();
         OrderStatus next = request.getStatus();
 
+        if (current == next) {
+            return mapToOrderResponse(order);
+        }
+
+        // 1. Kiểm tra trạng thái kết thúc
         if (current == OrderStatus.DELIVERED || current == OrderStatus.CANCELLED) {
             throw new AppException(ErrorCode.INVALID_ORDER_STATUS_TRANSITION,
-                    "Đơn hàng đã kết thúc (Đã giao hoặc Đã hủy), không thể chuyển trạng thái tiếp");
+                    "Đơn hàng đã kết thúc (" + current + "), không thể thay đổi trạng thái.");
+        }
+
+        // 2. Kiểm tra tính hợp lệ của luồng chuyển trạng thái
+        // Hợp lệ: PENDING -> CONFIRMED -> SHIPPING -> DELIVERED
+        // Hợp lệ: PENDING / CONFIRMED -> CANCELLED (hoặc AWAITING_REFUND nếu đã thanh toán)
+        // Hợp lệ: AWAITING_REFUND -> CANCELLED (xác nhận hoàn tiền)
+        boolean validTransition = false;
+        switch (current) {
+            case PENDING -> {
+                if (next == OrderStatus.CONFIRMED || next == OrderStatus.CANCELLED) {
+                    validTransition = true;
+                }
+            }
+            case CONFIRMED -> {
+                if (next == OrderStatus.SHIPPING || next == OrderStatus.CANCELLED) {
+                    validTransition = true;
+                }
+            }
+            case SHIPPING -> {
+                if (next == OrderStatus.DELIVERED) {
+                    validTransition = true;
+                }
+            }
+            case AWAITING_REFUND -> {
+                if (next == OrderStatus.CANCELLED) {
+                    validTransition = true;
+                }
+            }
+            default -> validTransition = false;
+        }
+
+        if (!validTransition) {
+            throw new AppException(ErrorCode.INVALID_ORDER_STATUS_TRANSITION,
+                    "Không thể chuyển trạng thái đơn hàng từ " + current + " sang " + next);
+        }
+
+        // 3. Theo D4: Chặn chuyển sang SHIPPING nếu đơn là SEPAY hoặc BANKING mà chưa PAID
+        if (next == OrderStatus.SHIPPING) {
+            if (order.getPaymentMethod() != PaymentMethod.COD && order.getPaymentStatus() != PaymentStatus.PAID) {
+                log.warn("Chặn giao hàng đơn {}: Phương thức {} chưa thanh toán (Trạng thái: {})",
+                        order.getOrderCode(), order.getPaymentMethod(), order.getPaymentStatus());
+                throw new AppException(ErrorCode.PAYMENT_REQUIRED_BEFORE_SHIPPING,
+                        "Đơn hàng " + order.getOrderCode() + " chưa thanh toán thành công (PAID), không thể chuyển sang giao hàng.");
+            }
+        }
+
+        // 4. Chuyển sang DELIVERED: Nếu là COD thì tự động ghi nhận thanh toán thành công
+        if (next == OrderStatus.DELIVERED) {
+            if (order.getPaymentMethod() == PaymentMethod.COD) {
+                order.setPaymentStatus(PaymentStatus.PAID);
+                order.setPaidAt(Instant.now());
+                order.setPaidAmount(order.getFinalAmount());
+            }
+        }
+
+        // 5. Theo D7: Hủy đơn hàng
+        if (next == OrderStatus.CANCELLED) {
+            if (order.getPaymentStatus() == PaymentStatus.PAID) {
+                // Đơn đã thanh toán: Chuyển sang AWAITING_REFUND để chờ admin hoàn tiền thủ công
+                order.setStatus(OrderStatus.AWAITING_REFUND);
+                restoreProductStockIdempotent(order);
+                order.setUpdatedAt(Instant.now());
+                Order saved = orderRepository.save(order);
+                log.info("Admin yêu cầu hủy đơn đã PAID {}. Đơn chuyển sang AWAITING_REFUND và đã hoàn kho.", order.getOrderCode());
+                return mapToOrderResponse(saved);
+            } else {
+                restoreProductStockIdempotent(order);
+            }
         }
 
         order.setStatus(next);
-
-        // Nếu COD giao thành công thì tự động chuyển paymentStatus sang PAID
-        if (next == OrderStatus.DELIVERED && order.getPaymentMethod() == PaymentMethod.COD) {
-            order.setPaymentStatus(PaymentStatus.PAID);
-            order.setPaidAt(Instant.now());
-        }
-
-        if (next == OrderStatus.CANCELLED) {
-            restoreProductStock(order.getItems());
-        }
-
+        order.setUpdatedAt(Instant.now());
         Order saved = orderRepository.save(order);
         log.info("Admin cập nhật trạng thái đơn {} từ {} sang {}", order.getOrderCode(), current, next);
         return mapToOrderResponse(saved);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public OrderResponse confirmRefund(String orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+
+        if (order.getStatus() != OrderStatus.AWAITING_REFUND && order.getPaymentStatus() != PaymentStatus.PAID) {
+            throw new AppException(ErrorCode.INVALID_ORDER_STATUS_TRANSITION,
+                    "Chỉ có thể xác nhận hoàn tiền cho đơn hàng ở trạng thái AWAITING_REFUND hoặc đã thanh toán (PAID).");
+        }
+
+        if (order.getPaymentStatus() == PaymentStatus.REFUNDED) {
+            throw new AppException(ErrorCode.ORDER_ALREADY_REFUNDED);
+        }
+
+        order.setStatus(OrderStatus.CANCELLED);
+        order.setPaymentStatus(PaymentStatus.REFUNDED);
+        order.setUpdatedAt(Instant.now());
+        restoreProductStockIdempotent(order);
+
+        Order saved = orderRepository.save(order);
+        log.info("Admin đã xác nhận hoàn tiền thủ công cho đơn hàng: {}", order.getOrderCode());
+        return mapToOrderResponse(saved);
+    }
+
+    /**
+     * Tự động quét và hủy các đơn hàng chưa thanh toán đã quá thời hạn timeoutMinutes nguyên tử,
+     * CHỈ hoàn tồn kho khi lệnh cập nhật nguyên tử findAndModify thành công (chống race condition).
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int cancelExpiredOrders(int timeoutMinutes) {
+        Instant cutoff = Instant.now().minus(timeoutMinutes, ChronoUnit.MINUTES);
+
+        Query candidateQuery = Query.query(Criteria.where("status").is(OrderStatus.PENDING)
+                .and("paymentStatus").is(PaymentStatus.UNPAID)
+                .and("paymentMethod").ne(PaymentMethod.COD)
+                .and("createdAt").lte(cutoff));
+
+        List<Order> candidates = mongoTemplate.find(candidateQuery, Order.class);
+        if (candidates.isEmpty()) {
+            return 0;
+        }
+
+        int count = 0;
+        for (Order candidate : candidates) {
+            Query atomicQuery = Query.query(Criteria.where("_id").is(candidate.getId())
+                    .and("status").is(OrderStatus.PENDING)
+                    .and("paymentStatus").is(PaymentStatus.UNPAID));
+            Update update = new Update()
+                    .set("status", OrderStatus.CANCELLED)
+                    .set("stockRestored", true)
+                    .set("updatedAt", Instant.now());
+
+            Order cancelled = mongoTemplate.findAndModify(atomicQuery, update,
+                    FindAndModifyOptions.options().returnNew(true), Order.class);
+
+            if (cancelled != null) {
+                restoreProductStockIdempotent(cancelled);
+                count++;
+                log.info("Tự động hủy đơn hàng quá hạn thanh toán: {} (tạo lúc {})",
+                        cancelled.getOrderCode(), cancelled.getCreatedAt());
+            }
+        }
+        return count;
+    }
+
+    private void restoreProductStockIdempotent(Order order) {
+        if (Boolean.TRUE.equals(order.getStockRestored())) {
+            log.info("Tồn kho của đơn hàng {} đã được hoàn trả trước đó, bỏ qua để bảo đảm tính idempotent.", order.getOrderCode());
+            return;
+        }
+        restoreProductStock(order.getItems());
+        order.setStockRestored(true);
     }
 
     private void restoreProductStock(List<OrderItem> items) {
@@ -289,9 +571,12 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private String generateUniqueOrderCode() {
+        String prefix = StringUtils.hasText(sePayService.getOrderCodePrefix())
+                ? sePayService.getOrderCodePrefix()
+                : "BETES";
         String code;
         do {
-            code = "BETES" + (10000000 + secureRandom.nextInt(90000000));
+            code = prefix + (10000000 + secureRandom.nextInt(90000000));
         } while (orderRepository.findByOrderCode(code).isPresent());
         return code;
     }
@@ -304,22 +589,13 @@ public class OrderServiceImpl implements OrderService {
         String transferContent = null;
 
         if (order.getPaymentMethod() == PaymentMethod.SEPAY || order.getPaymentMethod() == PaymentMethod.BANKING) {
-            if (appProperties != null && appProperties.getSepay() != null) {
-                bank = appProperties.getSepay().getBankName();
-                accNumber = appProperties.getSepay().getAccountNumber();
-                holder = appProperties.getSepay().getAccountHolder();
-                transferContent = order.getOrderCode();
+            bank = sePayService.getBankId();
+            accNumber = sePayService.getBankAccount();
+            holder = sePayService.getAccountHolder();
+            transferContent = order.getOrderCode();
 
-                String encodedContent = URLEncoder.encode(transferContent, StandardCharsets.UTF_8);
-                qrImageUrl = String.format(
-                        "https://qr.sepay.vn/img?acc=%s&bank=%s&amount=%s&des=%s&template=%s",
-                        accNumber != null ? accNumber : "",
-                        bank != null ? bank : "",
-                        order.getFinalAmount() != null ? order.getFinalAmount().toBigInteger().toString() : "0",
-                        encodedContent,
-                        appProperties.getSepay().getQrTemplate() != null ? appProperties.getSepay().getQrTemplate() : "compact"
-                );
-            }
+            long amount = order.getFinalAmount() != null ? order.getFinalAmount().longValue() : 0L;
+            qrImageUrl = sePayService.buildQrUrl(amount, transferContent);
         }
 
         return OrderResponse.builder()
@@ -334,6 +610,10 @@ public class OrderServiceImpl implements OrderService {
                 .totalAmount(order.getTotalAmount())
                 .shippingFee(order.getShippingFee())
                 .finalAmount(order.getFinalAmount())
+                .paidAmount(order.getPaidAmount() != null ? order.getPaidAmount() : BigDecimal.ZERO)
+                .amountDiscrepancy(order.getAmountDiscrepancy() != null ? order.getAmountDiscrepancy() : BigDecimal.ZERO)
+                .isOverpaid(Boolean.TRUE.equals(order.getIsOverpaid()))
+                .isUnderpaid(Boolean.TRUE.equals(order.getIsUnderpaid()))
                 .paymentMethod(order.getPaymentMethod())
                 .paymentStatus(order.getPaymentStatus())
                 .paidAt(order.getPaidAt())

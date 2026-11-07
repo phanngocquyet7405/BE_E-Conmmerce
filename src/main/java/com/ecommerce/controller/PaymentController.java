@@ -2,41 +2,55 @@ package com.ecommerce.controller;
 
 import com.ecommerce.common.constant.ApiRoutes;
 import com.ecommerce.common.response.ApiResponse;
-import com.ecommerce.dto.request.SePayWebhookRequest;
+import com.ecommerce.dto.response.PaymentMethodResponse;
 import com.ecommerce.dto.response.PaymentQrResponse;
 import com.ecommerce.dto.response.PaymentStatusResponse;
+import com.ecommerce.security.CustomUserDetails;
 import com.ecommerce.service.PaymentService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
-@RequestMapping(ApiRoutes.Payment.BASE)
+@RequestMapping({ApiRoutes.Payment.BASE, "/api/v1/payments"})
 @RequiredArgsConstructor
 public class PaymentController {
 
     private final PaymentService paymentService;
 
-    // 1. MOBILE/FE: Lấy mã VietQR SePay & thông tin chuyển khoản cho đơn hàng
+    // 1. MOBILE/FE: Lấy danh sách phương thức thanh toán đang bật (COD, SEPAY)
+    @GetMapping({ApiRoutes.Payment.METHODS, "/payment-methods"})
+    public ResponseEntity<ApiResponse<List<PaymentMethodResponse>>> getPaymentMethods() {
+        return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách phương thức thanh toán thành công",
+                paymentService.getAvailablePaymentMethods()));
+    }
+
+    // 2. MOBILE/FE: Lấy mã VietQR SePay & thông tin chuyển khoản cho đơn hàng (Bảo vệ IDOR)
     @GetMapping(ApiRoutes.Payment.SEPAY_QR_INFO)
-    public ResponseEntity<ApiResponse<PaymentQrResponse>> getPaymentQrInfo(@PathVariable String orderId) {
+    public ResponseEntity<ApiResponse<PaymentQrResponse>> getPaymentQrInfo(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @PathVariable String orderId) {
+        boolean isAdmin = userDetails != null && userDetails.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        String userId = userDetails != null ? userDetails.getId() : null;
+
         return ResponseEntity.ok(ApiResponse.ok("Lấy thông tin thanh toán thành công",
-                paymentService.getPaymentQrInfo(orderId)));
+                paymentService.getPaymentQrInfo(userId, isAdmin, orderId)));
     }
 
-    // 2. MOBILE/FE: Kiểm tra trạng thái thanh toán đơn hàng (dùng để Auto-poll sau khi khách chuyển tiền)
+    // 2. MOBILE/FE: Kiểm tra trạng thái thanh toán đơn hàng (Bảo vệ IDOR)
     @GetMapping(ApiRoutes.Payment.STATUS)
-    public ResponseEntity<ApiResponse<PaymentStatusResponse>> checkPaymentStatus(@PathVariable String orderId) {
-        return ResponseEntity.ok(ApiResponse.ok(paymentService.checkPaymentStatus(orderId)));
-    }
+    public ResponseEntity<ApiResponse<PaymentStatusResponse>> checkPaymentStatus(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @PathVariable String orderId) {
+        boolean isAdmin = userDetails != null && userDetails.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        String userId = userDetails != null ? userDetails.getId() : null;
 
-    // 3. SEPAY WEBHOOK: Tự động tiếp nhận thông báo chuyển khoản thành công từ SePay
-    @PostMapping(ApiRoutes.Payment.SEPAY_WEBHOOK)
-    public ResponseEntity<ApiResponse<Void>> sepayWebhook(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
-            @RequestBody SePayWebhookRequest request) {
-        paymentService.processSepayWebhook(authHeader, request);
-        return ResponseEntity.ok(ApiResponse.ok("Xử lý Webhook SePay thành công", null));
+        return ResponseEntity.ok(ApiResponse.ok(
+                paymentService.checkPaymentStatus(userId, isAdmin, orderId)));
     }
 }
