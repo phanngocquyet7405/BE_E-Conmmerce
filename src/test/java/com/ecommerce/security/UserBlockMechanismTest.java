@@ -92,9 +92,13 @@ class UserBlockMechanismTest {
 
         redisTokenService = new RedisTokenServiceImpl(redisTemplate, appProperties);
         userService = new UserServiceImpl(userRepository, orderRepository, redisTokenService, mongoTemplate);
+        com.ecommerce.service.impl.PasswordPolicyServiceImpl passwordPolicyService =
+                new com.ecommerce.service.impl.PasswordPolicyServiceImpl(passwordEncoder);
         authService = new AuthServiceImpl(
                 userRepository, passwordEncoder, authenticationManager,
-                jwtUtil, redisTokenService, emailService, appProperties, environment
+                jwtUtil, redisTokenService, emailService, appProperties, environment,
+                mock(com.ecommerce.service.OtpThrottleService.class),
+                passwordPolicyService
         );
     }
 
@@ -145,6 +149,7 @@ class UserBlockMechanismTest {
                 .build();
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(lockedUser));
+        when(passwordEncoder.matches(rawPassword, "encoded_pass")).thenReturn(true);
 
         LoginRequest loginRequest = new LoginRequest();
         loginRequest.setEmail(email);
@@ -166,12 +171,7 @@ class UserBlockMechanismTest {
 
         // 3. User đăng nhập lại sau khi mở khóa
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(lockedUser));
-        CustomUserDetails userDetails = new CustomUserDetails(
-                userId, email, List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER"))
-        );
-        Authentication auth = mock(Authentication.class);
-        when(auth.getPrincipal()).thenReturn(userDetails);
-        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class))).thenReturn(auth);
+        when(passwordEncoder.matches(rawPassword, "encoded_pass")).thenReturn(true);
         when(jwtUtil.generateAccessToken(any())).thenReturn("new_access_token");
         when(jwtUtil.generateRefreshToken(any(), anyString())).thenReturn("new_refresh_token");
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);

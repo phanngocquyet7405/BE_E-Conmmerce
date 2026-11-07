@@ -13,6 +13,8 @@ public interface AuthService {
      */
     void register(RegisterRequest request);
 
+    void resendVerificationOtp(ResendOtpRequest request);
+
     /**
      * Xác thực email bằng OTP:
      * - Kiểm tra mã OTP và thời hạn 5 phút
@@ -27,11 +29,19 @@ public interface AuthService {
      */
     TokenResponse login(LoginRequest request);
 
+    TokenResponse login(LoginRequest request, String clientIp);
+
     TokenResponse refreshToken(RefreshTokenRequest request);
 
     void logout(String accessToken);
 
+    void logout(String accessToken, LogoutRequest request);
+
+    void logoutAll(String userId);
+
     void forgotPassword(ForgotPasswordRequest request);
+
+    com.ecommerce.dto.response.VerifyResetOtpResponse verifyResetOtp(VerifyResetOtpRequest request);
 
     void resetPassword(ResetPasswordRequest request);
 

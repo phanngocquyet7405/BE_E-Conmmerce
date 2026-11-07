@@ -94,7 +94,7 @@ Khi vận hành trên **Render gói Free**:
 
 ### ✅ ĐỢT 2: Nghiệp vụ cốt lõi, Concurrency & Lỗ hổng nghiêm trọng (Đã hoàn tất)
 *   **OrderServiceImpl.java:** Khắc phục triệt để Overselling Race Condition bằng truy vấn nguyên tử `findAndModify` (`stock_quantity >= quantity`), bọc `@Transactional(rollbackFor = Exception.class)`, cơ chế hoàn tồn kho tự động nếu có lỗi phát sinh.
-*   **RedisTokenServiceImpl.java & ProfileServiceImpl.java:** Đổi sang Fail-Closed (`return false`), thêm hàm thu hồi toàn bộ phiên đăng nhập khi đổi mật khẩu (`deleteAllRefreshTokensForUser`).
+*   **RedisTokenServiceImpl.java & ProfileServiceImpl.java:** Đổi sang Fail-Closed (`return false`), thêm hàm thu hồi toàn bộ phiên đăng nhập khi đổi mật khẩu (`deleteAllRefreshTokensForUser`). *(Đính chính ngày 2026-11-07: Ở Đợt 2, ProfileServiceImpl thực tế chưa được tích hợp thu hồi token; tồn đọng này đã được xử lý triệt để tại Đợt 5 với hàm revokeAllSessions)*.
 *   **JwtAuthenticationFilter.java & CustomUserDetails.java:** Trích xuất định danh và quyền trực tiếp từ token claims, loại bỏ hoàn toàn việc query MongoDB trên mỗi request.
 *   **MediaServiceImpl.java:** Thêm kiểm tra Magic Bytes nhị phân, tự sinh extension an toàn, stream trực tiếp lên Cloudinary.
 *   **ProductServiceImpl.java, ProductController.java, OrderController.java:** Thoát ký tự đặc biệt với `Pattern.quote()`, giới hạn trần tham số phân trang `size` trong `[1, 50]`.
@@ -121,3 +121,25 @@ Khi vận hành trên **Render gói Free**:
     *   `JwtUtilTest` (5 tests)
     *   `OrderServiceTest` (4 tests)
     *   `EcommerceApplicationTests` (1 test)
+
+### ✅ ĐỢT 5: Làm sạch & Gia cố toàn diện Module Auth (Auth Hardening) (Hoàn tất ngày 2026-11-07)
+*   **Xác minh thực tế 11 điểm yếu (V1-V11):** Rà soát toàn bộ các file Auth, Redis, Security, Filter để kiểm chứng lỗ hổng.
+*   **OTP Resend & Cooldown (T1-T5):**
+    *   Tích hợp endpoint public `POST /api/v1/auth/resend-verification-otp` với phản hồi đồng nhất an toàn (chống enumeration).
+    *   Cho phép đăng ký lại (`register`) đối với tài khoản chưa kích hoạt để nhận OTP mới, bắt `DuplicateKeyException` khi va chạm đồng thời.
+    *   Xây dựng `UnverifiedUserCleanupTask` (@Scheduled) dọn dẹp các tài khoản chưa kích hoạt quá hạn 24 giờ.
+    *   Xây dựng `OtpThrottleService` với cooldown 60 giây và trần 5 OTP/giờ theo email (áp dụng fail-closed).
+    *   Chuyển bộ đếm thử sai OTP sang Fail-closed (ném 503 khi Redis lỗi), bổ sung bộ đếm sai theo giờ (khóa 1 giờ nếu sai >= 10 lần), đồng nhất phản hồi verifyOtp khi tài khoản không tồn tại hoặc đã active.
+*   **Quên mật khẩu Cách B 2 bước & Chính sách mật khẩu (T6-T9):**
+    *   Tách luồng quên mật khẩu: `forgot-password` (gửi OTP) -> `verify-reset-otp` (kiểm tra OTP, cấp `resetToken` 32 bytes ngẫu nhiên với TTL 10 phút lưu hash SHA-256 trên Redis) -> `reset-password` (tiêu thụ token atomic bằng GETDEL, đổi mật khẩu và thu hồi toàn bộ phiên).
+    *   Xây dựng `PasswordPolicyService`: kiểm soát mật khẩu 8-64 ký tự, tối đa 72 bytes UTF-8, không trùng email, không nằm trong danh sách phổ biến (`common-passwords.txt`), bắt buộc mật khẩu mới khác mật khẩu cũ; chuẩn hóa email và kiểm tra họ tên/số điện thoại.
+    *   Kích hoạt gửi email bất đồng bộ `@EnableAsync` với thread pool nhỏ (`mailExecutor`), retry 2 lần và bổ sung email cảnh báo khi đổi mật khẩu.
+    *   Dọn dẹp `ForgotPasswordRequest`: chỉ hỗ trợ email hợp lệ (@Email).
+*   **Quản lý phiên đăng nhập & Đăng xuất (T10-T12):**
+    *   Hiện thực hàm dùng chung `revokeAllSessions(userId)` kết hợp thu hồi whitelist refresh token và chặn token cũ bằng mốc `iat` trên Redis, tích hợp vào `resetPassword` và `ProfileServiceImpl.changePassword`.
+    *   Hỗ trợ `POST /api/v1/auth/logout` chấp nhận access token đã hết hạn, hỗ trợ body `{refreshToken}` để chỉ thu hồi đúng thiết bị đăng xuất; bổ sung endpoint `POST /api/v1/auth/logout-all`.
+    *   Cơ chế xoay refresh token an toàn: thu hồi atomic (chống race condition) và phát hiện dùng lại token cũ (`used-refresh`) để tự động kích hoạt thu hồi toàn bộ phiên đối với token bị đánh cắp.
+*   **Gia cố Đăng nhập (T13):**
+    *   Kiểm tra mật khẩu trước bằng `passwordEncoder.matches` trực tiếp, áp dụng dummy matches với hash giả khi email không tồn tại để đồng nhất thời gian xử lý; không để lộ trạng thái chưa kích hoạt hay bị khóa khi chưa cung cấp đúng mật khẩu.
+    *   Tích hợp khóa tạm thời bằng Redis: 5 lần sai/15 phút theo (email+IP) và 20 lần sai/15 phút theo email -> trả mã lỗi `ACCOUNT_TEMP_LOCKED` (HTTP 429).
+*   **Bộ Test Suites Toàn Diện:** Mở rộng thành công lên **141/141 unit tests (PASS 100%)**.

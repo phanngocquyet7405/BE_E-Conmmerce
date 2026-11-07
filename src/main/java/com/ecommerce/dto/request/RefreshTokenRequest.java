@@ -1,11 +1,13 @@
 package com.ecommerce.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 
 @Getter
 @Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class RefreshTokenRequest {
     @NotBlank(message = "Refresh Token không được để trống")
     private String refreshToken;

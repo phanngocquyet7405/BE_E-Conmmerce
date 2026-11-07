@@ -18,4 +18,11 @@ public interface EmailService {
      * @param htmlContent Nội dung HTML
      */
     void sendHtmlEmail(String toEmail, String subject, String htmlContent);
+
+    /**
+     * Gửi email thông báo mật khẩu tài khoản vừa được thay đổi thành công
+     *
+     * @param toEmail Địa chỉ email người nhận
+     */
+    void sendPasswordChangedEmail(String toEmail);
 }

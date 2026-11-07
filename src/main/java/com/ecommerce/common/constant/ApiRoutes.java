@@ -12,8 +12,11 @@ public final class ApiRoutes {
         public static final String REGISTER = "/register";
         public static final String REFRESH = "/refresh-token";
         public static final String LOGOUT = "/logout";
+        public static final String LOGOUT_ALL = "/logout-all";
         public static final String FORGOT_PASSWORD = "/forgot-password";
+        public static final String VERIFY_RESET_OTP = "/verify-reset-otp";
         public static final String VERIFY_OTP = "/verify-otp";
+        public static final String RESEND_VERIFICATION_OTP = "/resend-verification-otp";
         public static final String RESET_PASSWORD = "/reset-password";
         public static final String SEND_VERIFICATION_OTP = "/send-verification-otp";
         public static final String VERIFY_ACCOUNT = "/verify-account";

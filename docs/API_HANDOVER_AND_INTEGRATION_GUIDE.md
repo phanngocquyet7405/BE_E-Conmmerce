@@ -69,6 +69,10 @@
 ### 2.2. Xác thực mã OTP
 - **Endpoint:** `POST /api/v1/auth/verify-otp`
 - **Quyền:** Public
+
+> [!WARNING]
+> Endpoint này **CHỈ DÙNG ĐỂ KÍCH HOẠT TÀI KHOẢN ĐĂNG KÝ MỚI**.
+> **Tuyệt đối KHÔNG DÙNG endpoint này cho luồng Quên mật khẩu!** Luồng Quên mật khẩu bắt buộc phải dùng `POST /api/v1/auth/verify-reset-otp` để nhận `resetToken`.
 - **Request Body:**
 ```json
 {

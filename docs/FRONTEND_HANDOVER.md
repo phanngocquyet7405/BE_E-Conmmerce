@@ -53,7 +53,17 @@ Khi `data` là dữ liệu danh sách có phân trang:
 
 ## 2. XÁC THỰC, TÀI KHOẢN & OTP (AUTH FLOW)
 
-### 2.1. Luồng Đăng ký & Kích hoạt qua OTP
+### 2.1. Quy chuẩn Mật khẩu & Dữ liệu Đầu vào (Password Policy & Validation)
+Hệ thống áp dụng chính sách bảo mật mật khẩu và dữ liệu chuẩn hóa toàn diện cho các luồng Register, Reset Password và Change Password:
+- **Mật khẩu**: Độ dài bắt buộc từ **8 đến 64 ký tự**, tối đa **72 byte UTF-8** (đảm bảo an toàn thuật toán BCrypt).
+- **Chống lộ thông tin**: Mật khẩu **không được trùng hoặc chứa địa chỉ email**.
+- **Chặn mật khẩu phổ biến**: Từ chối các mật khẩu quá dễ đoán (nằm trong danh sách top 100+ mật khẩu phổ biến nhất như `12345678`, `password123`...).
+- **Đổi mật khẩu (`change-password`)**: Bắt buộc mật khẩu mới **phải khác mật khẩu hiện tại**.
+- **Họ và tên (`fullName`)**: 2 đến 100 ký tự.
+- **Email**: Tối đa 254 ký tự, hệ thống tự động chuẩn hóa (`trim()` và chuyển thành chữ thường `toLowerCase()`) trước khi lưu và truy vấn.
+- **Số điện thoại (`phone`)**: Nếu có, bắt buộc phải đúng định dạng di động Việt Nam: `^(0|\+84)(3|5|7|8|9)\d{8}$` (10 chữ số với đầu 0 hoặc 11 ký tự với +84).
+
+### 2.2. Luồng Đăng ký & Kích hoạt qua OTP (Register & Verification Flow)
 1. **Đăng ký tài khoản**: `POST /api/v1/auth/register`
    - **Body**:
      ```json
@@ -64,10 +74,11 @@ Khi `data` là dữ liệu danh sách có phân trang:
        "phone": "0987654321"
      }
      ```
-   - **Cơ chế**: Tài khoản được tạo với trạng thái `isActive = false`. Hệ thống sinh mã OTP 6 chữ số có hiệu lực trong **5 phút** và gửi vào email của người dùng.
-   - **Lưu ý**: Nếu tài khoản chưa kích hoạt mà gọi `POST /api/v1/auth/login`, API trả lỗi HTTP 400 (`USER_NOT_ACTIVATED` - mã `1017`).
+   - **Cơ chế**: Tài khoản được tạo với trạng thái `isActive = false`, `emailVerified = false`. Hệ thống sinh mã OTP 6 chữ số (hiệu lực **5 phút**) và gửi bất đồng bộ vào email của người dùng.
+   - **Đăng ký lại tài khoản chưa kích hoạt**: Nếu người dùng đăng ký lại bằng email của tài khoản chưa kích hoạt (`isActive == false && emailVerified == false`), hệ thống sẽ cập nhật thông tin họ tên, số điện thoại, mật khẩu mới và cấp OTP mới (tuân theo cooldown), không bị chặn lỗi email đã tồn tại. Nếu email đã kích hoạt, hệ thống trả HTTP 409 (`USER_ALREADY_EXISTS` - mã `1004`).
+   - **Lưu ý**: Nếu tài khoản chưa kích hoạt gọi `POST /api/v1/auth/login`, API trả lỗi HTTP 400 (`USER_NOT_ACTIVATED` - mã `1017`) sau khi đã xác thực mật khẩu chính xác.
 
-2. **Xác thực OTP kích hoạt**: `POST /api/v1/auth/verify-account` hoặc `/verify-otp`
+2. **Xác thực OTP kích hoạt**: `POST /api/v1/auth/verify-account` hoặc `POST /api/v1/auth/verify-otp`
    - **Body**:
      ```json
      {
@@ -75,24 +86,168 @@ Khi `data` là dữ liệu danh sách có phân trang:
        "otp": "123456"
      }
      ```
-   - **Thành công**: Tài khoản chuyển sang `isActive = true`, `emailVerified = true`. Người dùng có thể đăng nhập.
-   - **Bảo mật**: Nhập sai quá **5 lần**, mã OTP sẽ bị hủy trên Redis.
+   - **Thành công**: Tài khoản chuyển sang `isActive = true`, `emailVerified = true`. Người dùng có thể tiến hành đăng nhập.
+   - **Chống Brute-Force & Tiết lộ thông tin**:
+     - Sai quá **5 lần** cho một mã OTP: Mã OTP sẽ bị xóa ngay lập tức.
+     - Sai quá **10 lần/giờ** cho một email: Khóa luồng OTP của email đó trong **1 giờ** (trả HTTP 429 - `OTP_MAX_ATTEMPTS_EXCEEDED` mã `1011`).
+     - Phản hồi đồng nhất: Nếu tài khoản không tồn tại hoặc đã kích hoạt mà nhập OTP sai, API đều trả chung lỗi HTTP 400 `INVALID_OTP` (mã `1016`), tuyệt đối không tiết lộ tài khoản tồn tại hay trạng thái kích hoạt.
 
-3. **Gửi lại OTP**: `POST /api/v1/auth/send-verification-otp`
-   - **Body**: `{"email": "customer@gmail.com"}`.
-   - **Rate limit**: Tối đa 5 request/phút.
+3. **Gửi lại OTP kích hoạt (Public)**: `POST /api/v1/auth/resend-verification-otp`
+   - **Body**:
+     ```json
+     {
+       "email": "customer@gmail.com"
+     }
+     ```
+   - **Đặc điểm**: Endpoint công khai không cần token đăng nhập, dùng khi người dùng chưa nhận được email kích hoạt.
+   - **Bảo mật phản hồi**: Luôn trả thông điệp thành công đồng nhất `{"code": 1000, "message": "Nếu email tồn tại và chưa kích hoạt, mã OTP mới đã được gửi thành công"}` bất kể email có tồn tại hay không.
+   - **Rate Limit**: Tối đa 3 request/phút/IP (fail-closed HTTP 503 khi Redis lỗi). Giới hạn cooldown 60 giây giữa các lần nhận OTP và tối đa 5 OTP/giờ theo email (`OTP_THROTTLED` - mã `1010`).
 
-### 2.2. Đăng nhập & Quản lý Token
-- **Đăng nhập**: `POST /api/v1/auth/login`
-  - **Body**: `{"email": "...", "password": "..."}`
-  - **Response**: Trả về `accessToken` (JWT thời hạn ngắn), `refreshToken` (thời hạn 7 ngày, lưu Redis whitelist), thông tin `user`.
-- **Làm mới token**: `POST /api/v1/auth/refresh-token`
-  - **Body**: `{"refreshToken": "..."}`
-- **Đăng xuất**: `POST /api/v1/auth/logout`
-  - Thu hồi `refreshToken` khỏi Redis và đưa `accessToken` hiện tại vào blacklist.
-- **Quên mật khẩu**:
-  - Bước 1: `POST /api/v1/auth/forgot-password` với `{"email": "..."}`.
-  - Bước 2: `POST /api/v1/auth/reset-password` với `{"email": "...", "otp": "...", "newPassword": "..."}`. Sau khi reset thành công, toàn bộ refresh token cũ của tài khoản bị thu hồi ngay lập tức.
+4. **Gửi lại OTP (Authenticated)**: `POST /api/v1/auth/send-verification-otp`
+   - Dành cho phiên người dùng đã có token đăng nhập cần xác thực lại email. Áp dụng chung giới hạn cooldown 60 giây và tối đa 5 OTP/giờ.
+
+### 2.3. Đăng nhập & Quản lý Phiên (Login & Session Management)
+1. **Đăng nhập**: `POST /api/v1/auth/login`
+   - **Body**:
+     ```json
+     {
+       "email": "customer@gmail.com",
+       "password": "Password123@"
+     }
+     ```
+   - **Response**: Trả về `accessToken` (JWT thời hạn ngắn), `refreshToken` (thời hạn 7 ngày, lưu Redis whitelist), thông tin `user`.
+   - **Chống Timing Attack & Trích xuất thông tin (Anti-Enumeration)**:
+     - Hệ thống luôn kiểm tra mật khẩu trước (chạy giả lập hashing nếu user không tồn tại để cân bằng thời gian thực thi).
+     - Sai mật khẩu hoặc email không tồn tại đều trả về cùng lỗi HTTP 401 (`INVALID_CREDENTIALS` - mã `1005`).
+     - Chỉ khi mật khẩu ĐÚNG, hệ thống mới kiểm tra trạng thái tài khoản: `USER_NOT_ACTIVATED` (mã `1017`) hoặc `USER_BLOCKED` (mã `1018`).
+   - **Khóa tạm thời chống Brute-Force (`ACCOUNT_TEMP_LOCKED` - mã `1014`, HTTP 429)**:
+     - Sai quá **5 lần trong 15 phút** từ cùng một cặp (Email + IP).
+     - Sai quá **20 lần trong 15 phút** trên cùng một Email từ các IP khác nhau.
+     - Khi bị khóa tạm, hệ thống từ chối đăng nhập trong 15 phút. Đăng nhập thành công sẽ tự động đặt lại bộ đếm sai.
+
+2. **Làm mới token (Refresh Token)**: `POST /api/v1/auth/refresh-token`
+   - **Body**:
+     ```json
+     {
+       "refreshToken": "..."
+     }
+     ```
+   - **Response**: Cấp cặp token mới (`accessToken` và `refreshToken` xoay vòng).
+   - **Bảo mật Xoay vòng & Phát hiện Token Bị đánh cắp (Theft Detection)**:
+     - Mỗi refresh token chỉ được sử dụng đúng một lần và bị thu hồi nguyên tử (`atomic delete`).
+     - Token cũ được đưa vào danh sách kiểm soát `used-refresh` trong 7 ngày. Nếu một refresh token cũ được gửi lại (dấu hiệu bị attacker đánh cắp và gửi lại sau khi user thật đã refresh), hệ thống lập tức phát hiện nguy cơ và **thu hồi toàn bộ phiên đăng nhập của người dùng trên mọi thiết bị** ngay lập tức (`INVALID_TOKEN` - mã `1007`).
+
+3. **Đăng xuất (Logout)**: `POST /api/v1/auth/logout`
+   - **Header**: `Authorization: Bearer <accessToken>` (chấp nhận cả access token đã hết hạn để người dùng luôn đăng xuất được).
+   - **Body (Tùy chọn)**:
+     ```json
+     {
+       "refreshToken": "..."
+     }
+     ```
+   - **Hành vi**:
+     - Nếu gửi kèm `refreshToken`: Chỉ thu hồi đúng phiên đăng nhập / thiết bị tương ứng với refresh token đó.
+     - Nếu không gửi body hoặc `refreshToken` rỗng: Thu hồi toàn bộ phiên đăng nhập của người dùng trên mọi thiết bị.
+     - Access token hiện tại luôn được đưa vào blacklist trên Redis.
+
+4. **Đăng xuất tất cả thiết bị (Logout All)**: `POST /api/v1/auth/logout-all`
+   - **Header**: `Authorization: Bearer <accessToken>`.
+   - **Hành vi**: Xóa toàn bộ refresh token và ghi nhận mốc thời gian khóa phiên trên Redis, vô hiệu hóa ngay lập tức mọi token đã được cấp trước đó trên toàn bộ thiết bị.
+
+### 2.4. Luồng Quên & Đặt lại Mật khẩu (Forgot & Reset Password - Flow 2 Bước Mới)
+> [!IMPORTANT]
+> **BREAKING CHANGE**: Luồng đặt lại mật khẩu đã được chuyển đổi hoàn toàn sang mô hình 2 bước có `resetToken` dùng 1 lần, loại bỏ việc truyền trực tiếp OTP vào API đặt lại mật khẩu.
+
+> [!CAUTION]
+> **QUY TẮC BẮT BUỘC CHO FRONTEND (NEXT.JS & ANDROID)**:
+> - Màn hình quên mật khẩu **chỉ được chuyển sang bước đặt mật khẩu mới khi nhận được `resetToken` từ API `POST /api/v1/auth/verify-reset-otp`**.
+> - **Tuyệt đối KHÔNG DÙNG `/api/v1/auth/verify-otp` (hoặc `/verify-account`) cho luồng này!** API `/api/v1/auth/verify-otp` CHỈ dành riêng cho bước kích hoạt tài khoản đăng ký mới. Nếu gọi `/api/v1/auth/verify-otp`, client sẽ không nhận được `resetToken` và API đặt lại mật khẩu (`POST /api/v1/auth/reset-password`) sẽ từ chối hoàn toàn với lỗi HTTP 400.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Khách hàng / FE
+    participant Server as Backend API
+    participant Redis as Redis Cache
+    participant Mail as Async Email Service
+
+    User->>Server: 1. POST /auth/forgot-password {email}
+    Server->>Redis: Kiểm tra throttle (cooldown 60s, max 5 OTP/h)
+    Server->>Redis: Lưu OTP hash (5 phút)
+    Server-->>Mail: Gửi email OTP (Bất đồng bộ)
+    Server-->>User: {"code": 1000, "message": "Nếu email tồn tại..."}
+
+    User->>Server: 2. POST /auth/verify-reset-otp {identity, otp}
+    Server->>Redis: Xác thực OTP & Kiểm tra bộ đếm sai
+    Server->>Redis: Xóa OTP, sinh SecureRandom resetToken, lưu SHA-256 hash (10 phút)
+    Server-->>User: {"code": 1000, "data": {"resetToken": "...", "expiresIn": 600}}
+
+    User->>Server: 3. POST /auth/reset-password {resetToken, newPassword}
+    Server->>Redis: Atomic GETDEL hash(resetToken)
+    Server->>Server: Kiểm tra Password Policy & Mã hóa BCrypt
+    Server->>Redis: Thu hồi toàn bộ phiên (revokeAllSessions)
+    Server-->>Mail: Gửi email cảnh báo đã đổi mật khẩu
+    Server-->>User: {"code": 1000, "message": "Đặt lại mật khẩu thành công..."}
+```
+
+1. **Bước 1: Yêu cầu OTP quên mật khẩu**: `POST /api/v1/auth/forgot-password`
+   - **Body**:
+     ```json
+     {
+       "email": "customer@gmail.com"
+     }
+     ```
+     *(Lưu ý: Chỉ chấp nhận trường `email`, không hỗ trợ `channel` hay SMS).*
+   - **Response**: Luôn trả về phản hồi đồng nhất:
+     ```json
+     {
+       "code": 1000,
+       "message": "Nếu email tồn tại trong hệ thống, mã OTP đặt lại mật khẩu đã được gửi."
+     }
+     ```
+   - Email được gửi qua tiến trình bất đồng bộ (`@Async`), đảm bảo thời gian phản hồi API đồng đều bất kể email có tồn tại hay không.
+
+2. **Bước 2: Xác thực OTP để lấy `resetToken`**: `POST /api/v1/auth/verify-reset-otp` *(Endpoint mới)*
+   - **Body**:
+     ```json
+     {
+       "identity": "customer@gmail.com",
+       "otp": "123456"
+     }
+     ```
+   - **Response thành công**:
+     ```json
+     {
+       "code": 1000,
+       "message": "Xác thực OTP thành công. Vui lòng sử dụng mã resetToken để đổi mật khẩu.",
+       "data": {
+         "resetToken": "A_SECURE_RANDOM_32_BYTES_BASE64URL_STRING",
+         "expiresIn": 600
+       }
+     }
+     ```
+   - `resetToken` có thời hạn **10 phút (600 giây)**. Mỗi người dùng chỉ có tối đa 1 `resetToken` có hiệu lực tại một thời điểm (yêu cầu mới sẽ thay thế token cũ).
+   - Rate limit: 5 request/phút/IP (fail-closed HTTP 503 khi Redis lỗi).
+
+3. **Bước 3: Đổi mật khẩu mới**: `POST /api/v1/auth/reset-password`
+   - **Body**:
+     ```json
+     {
+       "resetToken": "A_SECURE_RANDOM_32_BYTES_BASE64URL_STRING",
+       "newPassword": "NewPassword123@"
+     }
+     ```
+     *(Lưu ý: Bỏ hoàn toàn trường `identity` và `otp`).*
+   - **Response**:
+     ```json
+     {
+       "code": 1000,
+       "message": "Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại."
+     }
+     ```
+   - `resetToken` bị tiêu thụ nguyên tử (atomic get-and-delete), chỉ sử dụng được **đúng 1 lần**.
+   - Toàn bộ phiên đăng nhập cũ trên mọi thiết bị bị thu hồi ngay lập tức (`revokeAllSessions`).
+   - Hệ thống tự động gửi email thông báo bảo mật đến người dùng: "Mật khẩu tài khoản của bạn vừa được thay đổi thành công".
 
 ---
 
@@ -276,6 +431,11 @@ stateDiagram-v2
 | `1005` | `INVALID_CREDENTIALS` | 401 | Email hoặc mật khẩu không chính xác. |
 | `1006` | `TOKEN_EXPIRED` | 401 | Access token hết hạn -> Gọi API `refresh-token`. |
 | `1007` | `INVALID_TOKEN` | 401 | Token không hợp lệ. |
+| `1010` | `OTP_THROTTLED` | 429 | Yêu cầu gửi OTP quá nhanh (cooldown 60s hoặc trần 5 OTP/giờ). Vui lòng thử lại sau. |
+| `1011` | `OTP_MAX_ATTEMPTS_EXCEEDED` | 429 | Nhập sai OTP quá 10 lần/giờ. Luồng OTP của email bị khóa tạm thời trong 1 giờ. |
+| `1012` | `AUTH_SERVICE_UNAVAILABLE` | 503 | Dịch vụ xác thực tạm thời không khả dụng do lỗi hạ tầng (Redis). Vui lòng thử lại sau. |
+| `1013` | `RESET_TOKEN_INVALID` | 400 | Mã đặt lại mật khẩu không hợp lệ, đã hết hạn (10 phút) hoặc đã được sử dụng. |
+| `1014` | `ACCOUNT_TEMP_LOCKED` | 429 | Tài khoản tạm thời bị khóa do đăng nhập sai nhiều lần (5 lần/IP hoặc 20 lần/email). Thử lại sau 15 phút. |
 | `1016` | `INVALID_OTP` | 400 | Mã OTP không đúng hoặc đã hết hạn (quá 5 phút). |
 | `1017` | `USER_NOT_ACTIVATED` | 400 | Tài khoản chưa xác thực OTP email -> Chuyển sang màn hình nhập OTP. |
 | `1018` | `USER_BLOCKED` | 403 | Tài khoản đã bị khóa bởi Quản trị viên. |
@@ -290,3 +450,20 @@ stateDiagram-v2
 | `5005` | `PAYMENT_REQUIRED_BEFORE_SHIPPING`| 400 | Đơn SEPAY chưa thanh toán (PAID), không thể chuyển sang giao hàng. |
 | `9001` | `TOO_MANY_REQUESTS` | 429 | Thao tác quá nhanh, vượt giới hạn Rate Limit (vui lòng thử lại sau 1 phút). |
 | `9999` | `INTERNAL_SERVER_ERROR` | 500 | Lỗi hệ thống máy chủ, vui lòng thử lại sau. |
+
+
+---
+
+## 8. DANH SÁCH BREAKING CHANGES CHO FRONTEND & MOBILE (ĐỢT GIA CỐ AUTH)
+
+Các kỹ sư Frontend (Next.js) và Mobile (Android) cần lưu ý điều chỉnh các điểm sau để tích hợp tương thích với API mới:
+
+| TT | Khu vực / Endpoint | Thay đổi cũ | Thay đổi mới (Bắt buộc tuân theo) | Lý do bảo mật & Lưu ý |
+| :-: | :--- | :--- | :--- | :--- |
+| **1** | `POST /auth/reset-password` | Nhận `{identity, otp, newPassword}` | Nhận `{resetToken, newPassword}` | Chuyển sang mô hình 2 bước: Client phải gọi `POST /auth/verify-reset-otp` trước để lấy `resetToken` (10 phút), sau đó mới gọi reset password. |
+| **2** | `POST /auth/verify-reset-otp` | *Chưa có* | **Endpoint mới**: Nhận `{identity, otp}`, trả `{resetToken, expiresIn: 600}` | Dùng để đổi mã OTP lấy `resetToken` dùng 1 lần. |
+| **3** | `POST /auth/forgot-password` | Nhận `{identity, channel}` | **Chỉ nhận `{email}`** | Bỏ trường `channel` và SMS do chưa hỗ trợ. Email gửi ngầm async. |
+| **4** | `POST /auth/logout` | Không có body | Có thể gửi body tùy chọn `{"refreshToken": "..."}` | Nếu gửi `refreshToken`, backend chỉ hủy đúng thiết bị hiện tại; nếu không gửi thì hủy toàn bộ thiết bị. |
+| **5** | `POST /auth/resend-verification-otp` | *Chưa có* | **Endpoint công khai mới**: Nhận `{"email": "..."}` | Không cần đăng nhập vẫn gửi lại được OTP kích hoạt. Luôn trả HTTP 200 message thành công đồng nhất. |
+| **6** | Chính sách mật khẩu | `min=6`, không trần, không check yếu | Bắt buộc **8 - 64 ký tự**, tối đa **72 byte UTF-8**, không trùng email, không nằm trong top mật khẩu phổ biến | Cần validate trên form FE trước khi submit để tránh người dùng bị backend từ chối. |
+| **7** | `POST /auth/verify-otp` | Trả `true` nếu user đã active | Luôn trả lỗi HTTP 400 `INVALID_OTP` nếu OTP sai, bất kể user đã active hay chưa | Chống rò rỉ trạng thái người dùng (enumeration). |
