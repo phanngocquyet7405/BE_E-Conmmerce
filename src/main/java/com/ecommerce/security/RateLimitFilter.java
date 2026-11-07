@@ -61,11 +61,26 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 return;
             }
         } catch (Exception ex) {
-            // Fail-open: Khi Redis lỗi/timeout, không làm gián đoạn người dùng hợp lệ
+            if (isOtpOrResetRoute(uri)) {
+                log.error("Redis Rate Limiter không khả dụng trên route OTP/Reset [{}]: {}. Áp dụng Fail-Closed.", uri, ex.getMessage());
+                writeServiceUnavailableResponse(response, uri);
+                return;
+            }
+            // Fail-open cho các route khác: Khi Redis lỗi/timeout, không làm gián đoạn người dùng hợp lệ
             log.warn("Redis Rate Limiter không khả dụng ({}). Bỏ qua rate limit và tiếp tục.", ex.getMessage());
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isOtpOrResetRoute(String uri) {
+        return uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.FORGOT_PASSWORD)
+                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_RESET_OTP)
+                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESET_PASSWORD)
+                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.SEND_VERIFICATION_OTP)
+                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESEND_VERIFICATION_OTP)
+                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_OTP)
+                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_ACCOUNT);
     }
 
     private int resolveMaxRequests(String uri) {
@@ -84,8 +99,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.SEND_VERIFICATION_OTP)) {
             return 3; // Tối đa 3 lần yêu cầu gửi OTP / phút / IP
         }
+        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESEND_VERIFICATION_OTP)) {
+            return 3; // Tối đa 3 lần gửi lại OTP xác thực / phút / IP
+        }
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_OTP)) {
             return 5; // Tối đa 5 lần verify OTP / phút / IP
+        }
+        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_RESET_OTP)) {
+            return 5; // Tối đa 5 lần verify reset OTP / phút / IP
         }
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_ACCOUNT)) {
             return 5; // Tối đa 5 lần verify account / phút / IP
@@ -97,6 +118,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
             return 10; // Tối đa 10 lần upload ảnh / phút / IP bảo vệ băng thông và Cloudinary quota
         }
         return -1;
+    }
+
+    private void writeServiceUnavailableResponse(HttpServletResponse response, String uri) throws IOException {
+        response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
+
+        String body = String.format(
+                "{\"success\":false,\"code\":1012,\"error\":\"AUTH_SERVICE_UNAVAILABLE\",\"message\":\"Dịch vụ xác thực tạm thời không khả dụng, vui lòng thử lại sau.\",\"path\":\"%s\"}",
+                uri
+        );
+        response.getWriter().write(body);
     }
 
     private void writeRateLimitResponse(HttpServletResponse response, String uri) throws IOException {

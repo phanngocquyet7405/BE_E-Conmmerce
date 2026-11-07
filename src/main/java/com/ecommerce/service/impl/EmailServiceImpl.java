@@ -8,7 +8,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.HtmlUtils;
 
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
@@ -23,34 +25,71 @@ public class EmailServiceImpl implements EmailService {
     @Value("${spring.mail.from:${spring.mail.username:no-reply@ecommerce.com}}")
     private String senderEmail;
 
+    @Async("mailExecutor")
     @Override
     public void sendOtpEmail(String toEmail, String otp) {
         String subject = "[Ecommerce] Mã OTP xác thực tài khoản";
-        String htmlContent = buildOtpTemplate(otp);
-        sendHtmlEmail(toEmail, subject, htmlContent);
+        String htmlContent = buildOtpTemplate(HtmlUtils.htmlEscape(otp != null ? otp : ""));
+        sendHtmlEmailWithRetry(toEmail, subject, htmlContent);
     }
 
+    @Async("mailExecutor")
     @Override
     public void sendHtmlEmail(String toEmail, String subject, String htmlContent) {
-        try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(
-                    message,
-                    MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED,
-                    StandardCharsets.UTF_8.name()
-            );
+        sendHtmlEmailWithRetry(toEmail, subject, htmlContent);
+    }
 
-            String from = (senderEmail != null && senderEmail.contains("@")) ? senderEmail : "no-reply@ecommerce.com";
-            helper.setFrom(from, "Ecommerce Store");
-            helper.setTo(toEmail);
-            helper.setSubject(subject);
-            helper.setText(htmlContent, true);
+    @Async("mailExecutor")
+    @Override
+    public void sendPasswordChangedEmail(String toEmail) {
+        String subject = "[Ecommerce] Thông báo: Mật khẩu của bạn vừa được thay đổi";
+        String escapedEmail = HtmlUtils.htmlEscape(toEmail != null ? toEmail : "");
+        String htmlContent = """
+            <!DOCTYPE html>
+            <html lang="vi">
+            <head><meta charset="UTF-8"><title>Mật khẩu đã thay đổi</title></head>
+            <body style="font-family: Arial, sans-serif; background: #f9fafb; padding: 24px;">
+                <div style="max-width: 500px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                    <h2 style="color: #1e3a8a; margin-top: 0;">Thông báo bảo mật</h2>
+                    <p>Xin chào <strong>%s</strong>,</p>
+                    <p>Mật khẩu tài khoản của bạn tại hệ thống vừa được thay đổi thành công.</p>
+                    <p style="color: #b91c1c; font-size: 13px;">Nếu bạn không thực hiện thay đổi này, vui lòng liên hệ ngay với quản trị viên để bảo vệ tài khoản.</p>
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
+                    <p style="font-size: 12px; color: #6b7280; text-align: center;">Đây là email tự động từ hệ thống Ecommerce, vui lòng không phản hồi email này.</p>
+                </div>
+            </body>
+            </html>
+            """.formatted(escapedEmail);
 
-            mailSender.send(message);
-            log.info("Đã gửi email thành công tới: {}", toEmail);
-        } catch (MessagingException | UnsupportedEncodingException e) {
-            log.error("Lỗi khi gửi email tới {}: {}", toEmail, e.getMessage(), e);
-            throw new RuntimeException("Không thể gửi email xác thực. Vui lòng thử lại sau.", e);
+        sendHtmlEmailWithRetry(toEmail, subject, htmlContent);
+    }
+
+    private void sendHtmlEmailWithRetry(String toEmail, String subject, String htmlContent) {
+        int maxAttempts = 2;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                MimeMessage message = mailSender.createMimeMessage();
+                MimeMessageHelper helper = new MimeMessageHelper(
+                        message,
+                        MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED,
+                        StandardCharsets.UTF_8.name()
+                );
+
+                String from = (senderEmail != null && senderEmail.contains("@")) ? senderEmail : "no-reply@ecommerce.com";
+                helper.setFrom(from, "Ecommerce Store");
+                helper.setTo(toEmail);
+                helper.setSubject(subject);
+                helper.setText(htmlContent, true);
+
+                mailSender.send(message);
+                log.info("Đã gửi email thành công tới: {} (lần thử {})", toEmail, attempt);
+                return;
+            } catch (Exception e) {
+                log.error("Lỗi khi gửi email tới {} (lần thử {}/{}): {}", toEmail, attempt, maxAttempts, e.getMessage());
+                if (attempt == maxAttempts) {
+                    log.error("Gửi email tới {} thất bại hoàn toàn sau {} lần thử.", toEmail, maxAttempts);
+                }
+            }
         }
     }
 

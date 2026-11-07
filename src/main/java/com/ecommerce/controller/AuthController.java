@@ -4,6 +4,7 @@ import com.ecommerce.common.constant.ApiRoutes;
 import com.ecommerce.common.response.ApiResponse;
 import com.ecommerce.dto.request.*;
 import com.ecommerce.dto.response.TokenResponse;
+import com.ecommerce.dto.response.VerifyResetOtpResponse;
 import com.ecommerce.security.CustomUserDetails;
 import com.ecommerce.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,6 +35,15 @@ public class AuthController {
     }
 
     /**
+     * Gửi lại mã OTP xác thực tài khoản (Public - dành cho tài khoản chưa kích hoạt)
+     */
+    @PostMapping(ApiRoutes.Auth.RESEND_VERIFICATION_OTP)
+    public ResponseEntity<ApiResponse<Void>> resendVerificationOtp(@Valid @RequestBody ResendOtpRequest request) {
+        authService.resendVerificationOtp(request);
+        return ResponseEntity.ok(ApiResponse.ok("Nếu tài khoản tồn tại và chưa được kích hoạt, mã OTP xác thực đã được gửi tới email.", null));
+    }
+
+    /**
      * 2. Xác thực tài khoản bằng OTP (Verify OTP)
      * Nhận email và mã OTP. Nếu hợp lệ -> kích hoạt tài khoản isActive = true.
      */
@@ -48,8 +58,11 @@ public class AuthController {
      * Chặn nếu isActive == false, thông báo "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email".
      */
     @PostMapping(ApiRoutes.Auth.LOGIN)
-    public ResponseEntity<ApiResponse<TokenResponse>> login(@Valid @RequestBody LoginRequest request) {
-        TokenResponse response = authService.login(request);
+    public ResponseEntity<ApiResponse<TokenResponse>> login(
+            @Valid @RequestBody LoginRequest request,
+            HttpServletRequest httpRequest) {
+        String clientIp = httpRequest != null ? httpRequest.getRemoteAddr() : "unknown";
+        TokenResponse response = authService.login(request, clientIp);
         return ResponseEntity.ok(ApiResponse.ok("Đăng nhập thành công", response));
     }
 
@@ -62,16 +75,35 @@ public class AuthController {
     }
 
     /**
-     * 5. Đăng xuất
+     * 5. Đăng xuất (Logout)
+     * - Chấp nhận access token đã hết hạn
+     * - Nếu gửi kèm refreshToken: chỉ thu hồi đúng refresh token đó
+     * - Nếu không gửi kèm refreshToken: giữ hành vi cũ thu hồi tất cả (deprecated)
      */
     @PostMapping(ApiRoutes.Auth.LOGOUT)
-    public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Void>> logout(
+            HttpServletRequest request,
+            @RequestBody(required = false) LogoutRequest body) {
         String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String accessToken = authHeader.substring(7);
-            authService.logout(accessToken);
-        }
+        String accessToken = (authHeader != null && authHeader.startsWith("Bearer "))
+                ? authHeader.substring(7)
+                : null;
+
+        authService.logout(accessToken, body);
         return ResponseEntity.ok(ApiResponse.ok("Đăng xuất thành công", null));
+    }
+
+    /**
+     * 5b. Đăng xuất toàn bộ thiết bị (Logout All Sessions)
+     */
+    @PostMapping(ApiRoutes.Auth.LOGOUT_ALL)
+    public ResponseEntity<ApiResponse<Void>> logoutAll(
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        if (userDetails == null) {
+            throw new com.ecommerce.exception.AppException(com.ecommerce.exception.ErrorCode.UNAUTHENTICATED);
+        }
+        authService.logoutAll(userDetails.getId());
+        return ResponseEntity.ok(ApiResponse.ok("Đã đăng xuất toàn bộ thiết bị thành công", null));
     }
 
     /**
@@ -80,11 +112,20 @@ public class AuthController {
     @PostMapping(ApiRoutes.Auth.FORGOT_PASSWORD)
     public ResponseEntity<ApiResponse<Void>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
         authService.forgotPassword(request);
-        return ResponseEntity.ok(ApiResponse.ok("Mã xác thực OTP đã được gửi đến " + request.getIdentity(), null));
+        return ResponseEntity.ok(ApiResponse.ok("Nếu email tồn tại trên hệ thống, mã OTP xác thực đã được gửi tới email của bạn.", null));
     }
 
     /**
-     * 7. Đặt lại mật khẩu mới bằng OTP
+     * 6b. Xác thực OTP quên mật khẩu - Bước 2a: Kiểm tra OTP và cấp resetToken dùng 1 lần (Cách B)
+     */
+    @PostMapping(ApiRoutes.Auth.VERIFY_RESET_OTP)
+    public ResponseEntity<ApiResponse<VerifyResetOtpResponse>> verifyResetOtp(@Valid @RequestBody VerifyResetOtpRequest request) {
+        VerifyResetOtpResponse response = authService.verifyResetOtp(request);
+        return ResponseEntity.ok(ApiResponse.ok("Xác thực mã OTP thành công. Vui lòng thiết lập mật khẩu mới.", response));
+    }
+
+    /**
+     * 7. Đặt lại mật khẩu mới bằng resetToken (Cách B)
      */
     @PostMapping(ApiRoutes.Auth.RESET_PASSWORD)
     public ResponseEntity<ApiResponse<Void>> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {

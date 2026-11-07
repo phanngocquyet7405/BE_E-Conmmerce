@@ -9,7 +9,10 @@ import com.ecommerce.dto.response.UserProfileResponse;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.repository.UserRepository;
+import com.ecommerce.service.EmailService;
+import com.ecommerce.service.PasswordPolicyService;
 import com.ecommerce.service.ProfileService;
+import com.ecommerce.service.RedisTokenService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -25,6 +28,9 @@ public class ProfileServiceImpl implements ProfileService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final RedisTokenService redisTokenService;
+    private final EmailService emailService;
+    private final PasswordPolicyService passwordPolicyService;
 
     @Override
     public UserProfileResponse getProfile(String userId) {
@@ -52,8 +58,21 @@ public class ProfileServiceImpl implements ProfileService {
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
             throw new AppException(ErrorCode.PASSWORD_NOT_MATCH);
         }
+
+        passwordPolicyService.validatePassword(request.getNewPassword(), user.getEmail());
+        passwordPolicyService.validateNewPasswordDiffersFromOld(request.getNewPassword(), user.getPassword());
+
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+
+        // V3 & T10: Thu hồi toàn bộ phiên đăng nhập cũ trên mọi thiết bị
+        redisTokenService.revokeAllSessions(user.getId());
+
+        // T8: Gửi email thông báo đổi mật khẩu
+        try {
+            emailService.sendPasswordChangedEmail(user.getEmail());
+        } catch (Exception ignored) {
+        }
     }
 
     @Override

@@ -19,6 +19,11 @@ public enum ErrorCode {
     PASSWORD_NOT_MATCH(1008, "Mật khẩu hiện tại không chính xác", HttpStatus.BAD_REQUEST),
     ACCOUNT_NOT_ACTIVATED(1009, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email", HttpStatus.FORBIDDEN),
     USER_NOT_ACTIVATED(1009, "Tài khoản chưa được kích hoạt, vui lòng kiểm tra email", HttpStatus.FORBIDDEN),
+    OTP_THROTTLED(1010, "Yêu cầu mã OTP quá nhanh hoặc vượt quá giới hạn. Vui lòng thử lại sau.", HttpStatus.TOO_MANY_REQUESTS),
+    OTP_MAX_ATTEMPTS_EXCEEDED(1011, "Bạn đã nhập sai mã OTP quá 10 lần trong 1 giờ. Vui lòng thử lại sau 1 giờ.", HttpStatus.TOO_MANY_REQUESTS),
+    AUTH_SERVICE_UNAVAILABLE(1012, "Dịch vụ xác thực tạm thời không khả dụng, vui lòng thử lại sau.", HttpStatus.SERVICE_UNAVAILABLE),
+    RESET_TOKEN_INVALID(1013, "Mã xác thực đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.", HttpStatus.BAD_REQUEST),
+    ACCOUNT_TEMP_LOCKED(1014, "Tài khoản tạm thời bị khóa do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau 15 phút.", HttpStatus.TOO_MANY_REQUESTS),
 
     // 2xxx: Validation & Request
     VALIDATION_ERROR(2001, "Dữ liệu gửi lên không thỏa mãn yêu cầu", HttpStatus.BAD_REQUEST),

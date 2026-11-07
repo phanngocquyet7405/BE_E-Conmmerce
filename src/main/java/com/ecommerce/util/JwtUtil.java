@@ -109,6 +109,29 @@ public class JwtUtil {
         return claims;
     }
 
+    /**
+     * Trích xuất claims của Access Token, chấp nhận token đã hết hạn (cho luồng logout).
+     * Chữ ký vẫn được kiểm tra toàn vẹn; ném INVALID_TOKEN nếu chữ ký bị giả mạo.
+     */
+    public Claims parseAccessTokenAllowExpired(String token) {
+        try {
+            return Jwts.parser()
+                    .verifyWith(accessKey)
+                    .requireIssuer(appProperties.getJwt().getIssuer())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+        } catch (ExpiredJwtException ex) {
+            Claims claims = ex.getClaims();
+            if (!TYPE_ACCESS.equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
+                throw new AppException(ErrorCode.INVALID_TOKEN, "Token không phải là Access Token");
+            }
+            return claims;
+        } catch (JwtException | IllegalArgumentException ex) {
+            throw new AppException(ErrorCode.INVALID_TOKEN);
+        }
+    }
+
     public Claims verifyRefreshToken(String token) {
         Claims claims = parseToken(token, refreshKey);
         if (!TYPE_REFRESH.equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {

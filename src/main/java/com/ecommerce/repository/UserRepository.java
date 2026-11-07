@@ -13,4 +13,5 @@ public interface UserRepository extends MongoRepository<User, String> {
     boolean existsByEmail(String email);
     Optional<User> findByEmailAndOtp(String email, String otp);
     long countByRolesContaining(RoleEnum role);
+    long deleteByActiveFalseAndEmailVerifiedFalseAndCreatedAtBefore(java.time.Instant cutoff);
 }

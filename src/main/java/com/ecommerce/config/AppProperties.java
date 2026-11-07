@@ -16,6 +16,15 @@ public class AppProperties {
     private final Jwt jwt = new Jwt();
     private final Cors cors = new Cors();
     private final Brevo brevo = new Brevo();
+    private final Auth auth = new Auth();
+
+    @Getter
+    @Setter
+    public static class Auth {
+        private int otpCooldownSeconds = 60;
+        private int otpMaxPerHour = 5;
+        private int unverifiedRetentionHours = 24;
+    }
 
     @Getter
     @Setter
