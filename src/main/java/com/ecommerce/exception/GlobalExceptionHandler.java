@@ -156,6 +156,33 @@ public class GlobalExceptionHandler {
                         .build());
     }
 
+
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingServletRequestParameter(
+            org.springframework.web.bind.MissingServletRequestParameterException ex, HttpServletRequest request) {
+        String msg = "Thiếu tham số bắt buộc: '" + ex.getParameterName() + "'";
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ErrorResponse.builder()
+                        .code(ErrorCode.VALIDATION_ERROR.getCode())
+                        .error("MISSING_PARAMETER")
+                        .message(msg)
+                        .path(request.getRequestURI())
+                        .build());
+    }
+
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotSupported(
+            org.springframework.web.HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
+        String msg = "Phương thức HTTP '" + ex.getMethod() + "' không được hỗ trợ cho đường dẫn này";
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ErrorResponse.builder()
+                        .code(4005)
+                        .error("METHOD_NOT_ALLOWED")
+                        .message(msg)
+                        .path(request.getRequestURI())
+                        .build());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUncaughtException(
             Exception ex, HttpServletRequest request) {

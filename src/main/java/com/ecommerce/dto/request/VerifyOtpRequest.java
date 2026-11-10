@@ -15,6 +15,9 @@ public class VerifyOtpRequest {
 
     private String identity;
 
+    @NotBlank(message = "Mật khẩu không được để trống")
+    private String password;
+
     @NotBlank(message = "Mã OTP không được để trống")
     @Size(min = 6, max = 6, message = "Mã OTP gồm đúng 6 chữ số")
     private String otp;

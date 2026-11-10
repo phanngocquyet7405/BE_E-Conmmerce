@@ -14,6 +14,7 @@ import com.ecommerce.service.PasswordPolicyService;
 import com.ecommerce.service.ProfileService;
 import com.ecommerce.service.RedisTokenService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +23,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProfileServiceImpl implements ProfileService {
@@ -66,7 +68,13 @@ public class ProfileServiceImpl implements ProfileService {
         userRepository.save(user);
 
         // V3 & T10: Thu hồi toàn bộ phiên đăng nhập cũ trên mọi thiết bị
-        redisTokenService.revokeAllSessions(user.getId());
+        try {
+            redisTokenService.revokeAllSessions(user.getId());
+        } catch (Exception ex) {
+            log.error("Mật khẩu của user {} đã đổi nhưng lỗi khi thu hồi toàn bộ phiên đăng nhập: {}", user.getEmail(), ex.getMessage());
+            throw new AppException(ErrorCode.INTERNAL_SERVER_ERROR,
+                    "mật khẩu đã đổi nhưng chưa đăng xuất được các thiết bị khác, hãy thử 'Đăng xuất tất cả'");
+        }
 
         // T8: Gửi email thông báo đổi mật khẩu
         try {

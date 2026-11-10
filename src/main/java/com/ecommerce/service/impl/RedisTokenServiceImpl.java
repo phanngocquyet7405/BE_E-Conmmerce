@@ -6,7 +6,11 @@ import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.service.RedisTokenService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ScanOptions;
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -103,20 +107,48 @@ public class RedisTokenServiceImpl implements RedisTokenService {
     public void deleteAllRefreshTokensForUser(String userId) {
         try {
             String pattern = REFRESH_KEY_PREFIX + userId + ":*";
-            Set<String> keys = redisTemplate.keys(pattern);
-            if (keys != null && !keys.isEmpty()) {
-                redisTemplate.delete(keys);
-                log.info("Đã thu hồi {} refresh token của người dùng {}", keys.size(), userId);
+            ScanOptions options = ScanOptions.scanOptions().match(pattern).count(100).build();
+            List<String> keysBatch = new ArrayList<>();
+            int totalDeleted = 0;
+            Cursor<String> cursor = redisTemplate.scan(options);
+            if (cursor != null) {
+                try (cursor) {
+                    while (cursor.hasNext()) {
+                        keysBatch.add(cursor.next());
+                        if (keysBatch.size() >= 100) {
+                            redisTemplate.delete(keysBatch);
+                            totalDeleted += keysBatch.size();
+                            keysBatch.clear();
+                        }
+                    }
+                    if (!keysBatch.isEmpty()) {
+                        redisTemplate.delete(keysBatch);
+                        totalDeleted += keysBatch.size();
+                    }
+                }
             }
+            log.info("Đã quét SCAN và thu hồi {} refresh token của người dùng {}", totalDeleted, userId);
+        } catch (AppException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("Không thể xóa toàn bộ refresh token của user {} trên Redis: {}", userId, e.getMessage());
+            log.error("Không thể xóa toàn bộ refresh token của user {} trên Redis qua SCAN: {}", userId, e.getMessage());
+            throw new AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "Không thể thu hồi phiên đăng nhập do lỗi kết nối Redis");
         }
     }
 
     @Override
     public void revokeAllSessions(String userId) {
         try {
-            blockUser(userId);
+            // N3.b: Thứ tự: xóa refresh token trước, rồi mới ghi mốc khóa access token
+            deleteAllRefreshTokensForUser(userId);
+
+            long epochSeconds = Instant.now().getEpochSecond();
+            long ttlMillis = (appProperties.getJwt() != null)
+                    ? appProperties.getJwt().getAccessExpirationMs()
+                    : 3600000L;
+
+            String key = BLOCKED_USER_PREFIX + userId;
+            redisTemplate.opsForValue().set(key, String.valueOf(epochSeconds), ttlMillis, TimeUnit.MILLISECONDS);
             log.info("Đã thu hồi toàn bộ phiên đăng nhập (refresh token & access token iat) cho user {}", userId);
         } catch (AppException e) {
             throw e;
@@ -158,7 +190,6 @@ public class RedisTokenServiceImpl implements RedisTokenService {
                     : 3600000L;
 
             String key = BLOCKED_USER_PREFIX + userId;
-            // Ghi giá trị là epoch giây lúc gọi, TTL = TTL access token
             redisTemplate.opsForValue().set(key, String.valueOf(epochSeconds), ttlMillis, TimeUnit.MILLISECONDS);
             deleteAllRefreshTokensForUser(userId);
             log.info("Đã ghi Redis blocked:user:{} với timestamp={} (TTL={}ms) và thu hồi refresh token",
@@ -194,6 +225,22 @@ public class RedisTokenServiceImpl implements RedisTokenService {
         } catch (Exception e) {
             log.warn("Lỗi kiểm tra blocked user trên Redis (fail-open): {}", e.getMessage());
             return false;
+        }
+    }
+
+    @Override
+    public boolean isUserBlockedFailClosed(String userId, long issuedAtSeconds) {
+        try {
+            String key = BLOCKED_USER_PREFIX + userId;
+            Object val = redisTemplate.opsForValue().get(key);
+            if (val == null) {
+                return false;
+            }
+            long blockedAtEpochSeconds = Long.parseLong(val.toString());
+            return issuedAtSeconds < blockedAtEpochSeconds;
+        } catch (Exception e) {
+            log.error("Lỗi kiểm tra blocked user trên Redis (fail-closed): {}", e.getMessage());
+            throw new AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "Dịch vụ xác thực tạm thời không khả dụng, vui lòng thử lại sau");
         }
     }
 
@@ -304,6 +351,18 @@ public class RedisTokenServiceImpl implements RedisTokenService {
     }
 
     @Override
+    public String peekPasswordResetToken(String tokenHash) {
+        try {
+            String tokenKey = RESET_TOKEN_PREFIX + tokenHash;
+            Object userIdVal = redisTemplate.opsForValue().get(tokenKey);
+            return userIdVal != null ? userIdVal.toString() : null;
+        } catch (Exception e) {
+            log.error("Lỗi khi kiểm tra password reset token trên Redis (fail-closed): {}", e.getMessage());
+            throw new AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "Dịch vụ xác thực tạm thời không khả dụng, vui lòng thử lại sau");
+        }
+    }
+
+    @Override
     public String consumePasswordResetTokenAtomic(String tokenHash) {
         try {
             String tokenKey = RESET_TOKEN_PREFIX + tokenHash;
@@ -367,9 +426,10 @@ public class RedisTokenServiceImpl implements RedisTokenService {
     public void resetLoginFailure(String email, String ip) {
         try {
             String ipKey = LOGIN_FAIL_IP_PREFIX + email + ":" + (ip != null ? ip : "unknown");
-            redisTemplate.delete(ipKey);
+            String emailKey = LOGIN_FAIL_EMAIL_PREFIX + email;
+            redisTemplate.delete(List.of(ipKey, emailKey));
         } catch (Exception e) {
-            log.warn("Lỗi khi reset bộ đếm đăng nhập sai theo IP trên Redis: {}", e.getMessage());
+            log.warn("Lỗi khi reset bộ đếm đăng nhập sai trên Redis: {}", e.getMessage());
         }
     }
 }

@@ -14,6 +14,7 @@ public interface RedisTokenService {
     void blockUser(String userId);
     void unblockUser(String userId);
     boolean isUserBlocked(String userId, long issuedAtSeconds);
+    boolean isUserBlockedFailClosed(String userId, long issuedAtSeconds);
 
     // Quản lý OTP
     void saveOtp(String key, String otp, long ttlSeconds);
@@ -28,6 +29,7 @@ public interface RedisTokenService {
 
     // Password Reset Token (Cách B)
     void savePasswordResetToken(String userId, String tokenHash, long ttlSeconds);
+    String peekPasswordResetToken(String tokenHash);
     String consumePasswordResetTokenAtomic(String tokenHash);
 
     // Khóa tạm tài khoản khi đăng nhập sai nhiều lần (T13)

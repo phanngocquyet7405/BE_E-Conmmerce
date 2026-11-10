@@ -77,10 +77,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.FORGOT_PASSWORD)
                 || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_RESET_OTP)
                 || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESET_PASSWORD)
-                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.SEND_VERIFICATION_OTP)
                 || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESEND_VERIFICATION_OTP)
-                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_OTP)
-                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_ACCOUNT);
+                || uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_OTP);
     }
 
     private int resolveMaxRequests(String uri) {
@@ -96,9 +94,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.FORGOT_PASSWORD)) {
             return 3; // Tối đa 3 lần yêu cầu quên mật khẩu / phút / IP
         }
-        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.SEND_VERIFICATION_OTP)) {
-            return 3; // Tối đa 3 lần yêu cầu gửi OTP / phút / IP
-        }
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESEND_VERIFICATION_OTP)) {
             return 3; // Tối đa 3 lần gửi lại OTP xác thực / phút / IP
         }
@@ -107,9 +102,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_RESET_OTP)) {
             return 5; // Tối đa 5 lần verify reset OTP / phút / IP
-        }
-        if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_ACCOUNT)) {
-            return 5; // Tối đa 5 lần verify account / phút / IP
         }
         if (uri.equals(ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESET_PASSWORD)) {
             return 5; // Tối đa 5 lần reset mật khẩu / phút / IP

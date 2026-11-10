@@ -76,6 +76,8 @@ Mọi bí mật đều đọc từ file `.env` ở local hoặc cấu hình trê
 | `SPRING_MAIL_FROM` | Email hiển thị người gửi | Email đã verify trên Mailjet (vd `furiousfast189@gmail.com`) |
 | `SEPAY_BANK_ID` | Mã định danh ngân hàng SePay VietQR | `MBBank`, `VCB`, `ACB`, `TPBank` |
 | `SEPAY_BANK_ACCOUNT` | Số tài khoản ngân hàng nhận tiền | `0862483762` |
+| `SEPAY_ACCOUNT_HOLDER` | Tên chủ tài khoản thụ hưởng | `NGUYEN VAN A` |
+| `SEPAY_API_KEY` | Khóa API SePay (nếu dùng xác thực API Key) | API Key lấy từ SePay |
 | `SEPAY_WEBHOOK_SECRET` | Khóa bí mật HMAC-SHA256 Webhook | Lấy từ trang Webhooks trên `my.sepay.vn` |
 | `CLOUDINARY_*` | Cấu hình lưu trữ ảnh Cloudinary | `cloud-name`, `api-key`, `api-secret` |
 | `CORS_ALLOWED_ORIGINS` | Danh sách domain frontend được phép | `http://localhost:3000,http://localhost:5173,http://localhost:8081` |

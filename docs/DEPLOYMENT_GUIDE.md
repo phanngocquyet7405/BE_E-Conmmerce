@@ -152,3 +152,37 @@ ENTRYPOINT ["sh", "-c", "java $JAVA_TOOL_OPTIONS -jar app.jar"]
   # Chạy toàn bộ test kiểm thử:
   mvn clean test
   ```
+
+
+---
+
+## 7. BẢNG MA TRẬN HÀNH VI HỆ THỐNG KHI REDIS GẶP SỰ CỐ (FAIL-OPEN / FAIL-CLOSED MATRIX)
+
+Khi Redis (Upstash hoặc Local) gặp sự cố mất kết nối, quá tải hoặc phản hồi chậm, hệ thống phân tách rõ ràng hai nhóm hành vi:
+- **Fail-open**: Cho phép request đi tiếp để đảm bảo tính sẵn sàng (Availability) cho trải nghiệm người dùng đối với các thao tác đọc không thay đổi trạng thái tài chính/dữ liệu.
+- **Fail-closed**: Chặn request ngay lập tức và trả mã lỗi an toàn (503 Service Unavailable hoặc AppException) để bảo vệ an ninh và tránh bypass cơ chế phòng thủ.
+
+| Thao tác / Phương thức | Vị trí trong Code | Cơ chế | Hành vi thực tế khi Redis lỗi & Hệ quả bảo mật |
+| :--- | :--- | :---: | :--- |
+| **Kiểm tra Blacklist Access Token** | JwtAuthenticationFilter.java:50-53 | **Fail-open** | isAccessTokenBlacklisted bắt Exception, log warning và gán isBlacklisted = false. Token hợp lệ về mặt chữ ký vẫn được đi tiếp. *Hệ quả:* Access token đã logout trước đó vẫn có thể dùng được trong thời gian sống còn lại của token nếu Redis sập. |
+| **Kiểm tra Mốc khóa User trong JWT Filter** | JwtAuthenticationFilter.java:68-73 | **Fail-open** | isUserBlocked bắt Exception, log warning và gán isUserBlocked = false. *Hệ quả:* User bị khóa hoặc vừa đổi mật khẩu/quyền vẫn có thể gọi API bằng access token đã cấp trước đó cho tới khi hết hạn token (tối đa 15 phút hoặc 24h tùy cấu hình). **Thu hồi phiên không có tác dụng ngay lập tức đối với access token khi Redis sập.** |
+| **Kiểm tra Refresh Token Whitelist** | RedisTokenServiceImpl.java:33-40 | **Fail-closed** | isRefreshTokenValid bắt lỗi và bắt buộc 
+eturn false;. Không thể cấp cặp token mới khi Redis sập. |
+| **Kiểm tra Mốc khóa User trong luồng Refresh** | RedisTokenServiceImpl.java:232-246<br>AuthServiceImpl.java:353-358 | **Fail-closed** | isUserBlockedFailClosed ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). Chặn triệt để việc cấp token mới nếu không thể kiểm chứng mốc khóa của user. |
+| **Phát hiện tái sử dụng Refresh Token** | RedisTokenServiceImpl.java:96-103 | **Fail-open** | isRefreshTokenUsed bắt lỗi và trả alse. Luồng tiếp tục tới bước xóa atomic để chặn xung đột. |
+| **Thu hồi Refresh Token Atomic (GETDEL)** | RedisTokenServiceImpl.java:60-70 | **Fail-closed** | deleteRefreshTokenAtomic bắt lỗi và trả alse. AuthServiceImpl.refreshToken lập tức ném ErrorCode.TOKEN_REVOKED. |
+| **Quét và Xóa toàn bộ Refresh Token (SCAN)** | RedisTokenServiceImpl.java:110-136 | **Fail-closed** | deleteAllRefreshTokensForUser bắt lỗi và ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). Không nuốt lỗi. |
+| **Thu hồi toàn bộ phiên (revokeAllSessions)** | RedisTokenServiceImpl.java:139-158 | **Fail-closed** | 
+evokeAllSessions lan truyền AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). Giúp luồng đổi mật khẩu/reset mật khẩu phát hiện lỗi và cảnh báo người dùng. |
+| **Ghi nhận & Khóa tài khoản (blockUser)** | RedisTokenServiceImpl.java:160-176 | **Fail-closed** | Ném AppException(ErrorCode.INTERNAL_SERVER_ERROR). Thao tác khóa user hoặc hạ quyền của Admin không thành công nếu chưa ghi được Redis. |
+| **Lưu mã OTP (saveOtp)** | RedisTokenServiceImpl.java:248-256 | **Fail-closed** | Ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). Không cho phép gửi OTP nếu không lưu được vào Redis. |
+| **Lấy mã OTP (getOtp)** | RedisTokenServiceImpl.java:258-266 | **Fail-open** | Trả 
+ull, hệ thống fallback đọc OTP đã lưu trong MongoDB Document (user.getOtp()). |
+| **Throttle OTP (Cooldown & Trần giờ)** | OtpThrottleServiceImpl.java:63-68 | **Fail-closed** | Ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). Chặn tuyệt đối nguy cơ spam gửi email OTP khi Redis gặp sự cố. |
+| **Xác thực OTP kích hoạt (verifyOtp)** | AuthServiceImpl.java:274-279 | **Fail-closed** | Bọc try-catch fail-closed, ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE) nếu Redis phát sinh lỗi khi đếm hoặc xóa OTP. |
+| **Lưu Password Reset Token** | RedisTokenServiceImpl.java:344-353 | **Fail-closed** | Ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). |
+| **Xem trước Password Reset Token (peek)** | RedisTokenServiceImpl.java:355-365 | **Fail-closed** | Ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). |
+| **Tiêu thụ Password Reset Token Atomic** | RedisTokenServiceImpl.java:367-379 | **Fail-closed** | Ném AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE). |
+| **Ghi nhận & Kiểm tra Đăng nhập sai (Brute-force)**| RedisTokenServiceImpl.java:381-435 | **Fail-open** | Khi Redis lỗi, getLoginFailAttempts trả 0 và 
+ecordLoginFailure chỉ log warning. Người dùng không bị chặn đăng nhập nhầm nếu Redis tạm thời đứt quãng. |
+| **Rate Limiting theo IP (RateLimitFilter)** | RateLimitFilter.java:69-72 | **Fail-open** | Bắt lỗi Redis, ghi log warning và tiếp tục chuỗi filter (ilterChain.doFilter). Đảm bảo hệ thống không bị tê liệt toàn bộ khi Redis rate limit trục trặc. |

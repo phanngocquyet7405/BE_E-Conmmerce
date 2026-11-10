@@ -18,8 +18,6 @@ public final class ApiRoutes {
         public static final String VERIFY_OTP = "/verify-otp";
         public static final String RESEND_VERIFICATION_OTP = "/resend-verification-otp";
         public static final String RESET_PASSWORD = "/reset-password";
-        public static final String SEND_VERIFICATION_OTP = "/send-verification-otp";
-        public static final String VERIFY_ACCOUNT = "/verify-account";
     }
 
     public static final class Profile {

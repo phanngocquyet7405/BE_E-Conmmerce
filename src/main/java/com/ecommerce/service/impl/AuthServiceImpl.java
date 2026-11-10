@@ -91,17 +91,14 @@ public class AuthServiceImpl implements AuthService {
                 throw new AppException(ErrorCode.EMAIL_ALREADY_EXISTS);
             }
 
-            // Tài khoản chưa kích hoạt và chưa verify: Cập nhật thông tin và cấp OTP mới
+            // N1.a: Tài khoản chưa kích hoạt và chưa verify: KHÔNG ghi đè fullName/phone/password/createdAt
+            // Chỉ cấp OTP mới (qua throttle) và trả cùng phản hồi
             String rawOtp = generateOtp();
             String hashedOtp = hashOtp(rawOtp);
             Instant otpExpiryTime = Instant.now().plus(5, ChronoUnit.MINUTES);
 
-            existingUser.setFullName(request.getFullName().trim());
-            existingUser.setPassword(passwordEncoder.encode(request.getPassword()));
-            existingUser.setPhone(request.getPhone() != null ? request.getPhone().trim() : null);
             existingUser.setOtp(hashedOtp);
             existingUser.setOtpExpiryTime(otpExpiryTime);
-            existingUser.setCreatedAt(Instant.now());
             userRepository.save(existingUser);
 
             redisTokenService.saveOtp("verify-account:" + email, hashedOtp, 300);
@@ -216,69 +213,84 @@ public class AuthServiceImpl implements AuthService {
             throw new AppException(ErrorCode.VALIDATION_ERROR, "Vui lòng cung cấp email cần xác thực");
         }
 
-        // 1. Kiểm tra bộ đếm sai theo giờ (T5)
-        int hourlyFailed = redisTokenService.getHourlyFailedAttempts("verify-account", email);
-        if (hourlyFailed >= 10) {
-            throw new AppException(ErrorCode.OTP_MAX_ATTEMPTS_EXCEEDED,
-                    "Bạn đã nhập sai mã OTP quá 10 lần trong 1 giờ. Luồng OTP tạm thời bị khóa 1 giờ.");
-        }
-
-        User user = userRepository.findByEmail(email).orElse(null);
-        boolean eligible = (user != null && !user.isActive() && !user.isEmailVerified());
-
-        String inputOtp = request.getOtp() != null ? request.getOtp().trim() : "";
-        String inputHash = hashOtp(inputOtp);
-        String redisKey = "verify-account:" + email;
-
-        String storedHash;
-        if (eligible) {
-            storedHash = redisTokenService.getOtp(redisKey);
-            if (!StringUtils.hasText(storedHash)) {
-                storedHash = user.getOtp();
+        try {
+            // 1. Kiểm tra bộ đếm sai theo giờ (T5)
+            int hourlyFailed = redisTokenService.getHourlyFailedAttempts("verify-account", email);
+            if (hourlyFailed >= 10) {
+                throw new AppException(ErrorCode.OTP_MAX_ATTEMPTS_EXCEEDED,
+                        "Bạn đã nhập sai mã OTP hoặc mật khẩu quá 10 lần trong 1 giờ. Luồng OTP tạm thời bị khóa 1 giờ.");
             }
-        } else {
-            // Giả lập stored hash để thời gian so sánh constant-time tương đương
-            storedHash = DUMMY_HASH;
-        }
 
-        boolean otpMatches = eligible && isConstantTimeEqual(inputHash, storedHash);
+            User user = userRepository.findByEmail(email).orElse(null);
+            boolean eligible = (user != null && !user.isActive() && !user.isEmailVerified());
 
-        if (!otpMatches) {
-            // Tăng bộ đếm sai theo giờ cho email (không bị reset khi xin OTP mới)
-            redisTokenService.incrementHourlyFailedAttempts("verify-account", email, 3600);
+            String inputOtp = request.getOtp() != null ? request.getOtp().trim() : "";
+            String inputHash = hashOtp(inputOtp);
+            String redisKey = "verify-account:" + email;
 
-            int attempts = redisTokenService.incrementOtpAttempts("verify-account:" + email, 300);
-            if (attempts >= MAX_OTP_ATTEMPTS) {
-                if (user != null) {
-                    user.setOtp(null);
-                    user.setOtpExpiryTime(null);
-                    userRepository.save(user);
+            String storedHash;
+            String userPasswordHash;
+            if (eligible) {
+                storedHash = redisTokenService.getOtp(redisKey);
+                if (!StringUtils.hasText(storedHash)) {
+                    storedHash = user.getOtp();
                 }
-                redisTokenService.deleteOtp(redisKey);
-                redisTokenService.resetOtpAttempts("verify-account:" + email);
-                throw new AppException(ErrorCode.VALIDATION_ERROR,
-                        "Bạn đã nhập sai mã OTP quá 5 lần. Mã OTP đã bị hủy để đảm bảo an toàn, vui lòng yêu cầu mã mới.");
+                userPasswordHash = user.getPassword();
+            } else {
+                // Giả lập stored hash và password hash để thời gian tính toán tương đương
+                storedHash = DUMMY_HASH;
+                userPasswordHash = DUMMY_BCRYPT_HASH;
             }
-            throw new AppException(ErrorCode.VALIDATION_ERROR,
-                    "Mã OTP không chính xác hoặc đã hết hạn (Lần thử " + attempts + "/" + MAX_OTP_ATTEMPTS + ")");
+
+            String inputPassword = request.getPassword() != null ? request.getPassword() : "";
+            boolean otpMatches = isConstantTimeEqual(inputHash, storedHash != null ? storedHash : DUMMY_HASH);
+            boolean passwordMatches = passwordEncoder.matches(inputPassword, userPasswordHash != null ? userPasswordHash : DUMMY_BCRYPT_HASH);
+
+            // N1.b: Tính cả hai điều kiện, không short-circuit
+            boolean valid = eligible & otpMatches & passwordMatches;
+
+            if (!valid) {
+                // Tăng bộ đếm sai theo giờ cho email (không bị reset khi xin OTP mới)
+                redisTokenService.incrementHourlyFailedAttempts("verify-account", email, 3600);
+
+                int attempts = redisTokenService.incrementOtpAttempts("verify-account:" + email, 300);
+                if (attempts >= MAX_OTP_ATTEMPTS) {
+                    if (user != null) {
+                        user.setOtp(null);
+                        user.setOtpExpiryTime(null);
+                        userRepository.save(user);
+                    }
+                    redisTokenService.deleteOtp(redisKey);
+                    redisTokenService.resetOtpAttempts("verify-account:" + email);
+                    throw new AppException(ErrorCode.VALIDATION_ERROR,
+                            "Bạn đã nhập sai thông tin xác thực quá 5 lần. Mã OTP đã bị hủy để đảm bảo an toàn, vui lòng yêu cầu mã mới.");
+                }
+                throw new AppException(ErrorCode.VALIDATION_ERROR,
+                        "Mã OTP hoặc mật khẩu không chính xác hoặc đã hết hạn (Lần thử " + attempts + "/" + MAX_OTP_ATTEMPTS + ")");
+            }
+
+            if (user.getOtpExpiryTime() != null && user.getOtpExpiryTime().isBefore(Instant.now())) {
+                throw new AppException(ErrorCode.VALIDATION_ERROR, "Mã OTP đã hết hạn, vui lòng yêu cầu mã mới");
+            }
+
+            // Kích hoạt tài khoản
+            user.setActive(true);
+            user.setEmailVerified(true);
+            user.setOtp(null);
+            user.setOtpExpiryTime(null);
+            userRepository.save(user);
+
+            redisTokenService.deleteOtp(redisKey);
+            redisTokenService.resetOtpAttempts("verify-account:" + email);
+
+            log.info("Tài khoản {} đã được kích hoạt thành công qua mã OTP và mật khẩu.", email);
+            return true;
+        } catch (AppException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Lỗi khi xác thực OTP trên Redis (fail-closed): {}", e.getMessage());
+            throw new AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "Dịch vụ xác thực tạm thời không khả dụng, vui lòng thử lại sau.");
         }
-
-        if (user.getOtpExpiryTime() != null && user.getOtpExpiryTime().isBefore(Instant.now())) {
-            throw new AppException(ErrorCode.VALIDATION_ERROR, "Mã OTP đã hết hạn, vui lòng yêu cầu mã mới");
-        }
-
-        // Kích hoạt tài khoản
-        user.setActive(true);
-        user.setEmailVerified(true);
-        user.setOtp(null);
-        user.setOtpExpiryTime(null);
-        userRepository.save(user);
-
-        redisTokenService.deleteOtp(redisKey);
-        redisTokenService.resetOtpAttempts("verify-account:" + email);
-
-        log.info("Tài khoản {} đã được kích hoạt thành công qua mã OTP.", email);
-        return true;
     }
 
     /**
@@ -349,6 +361,16 @@ public class AuthServiceImpl implements AuthService {
         Claims claims = jwtUtil.verifyRefreshToken(request.getRefreshToken());
         String userId = claims.get(JwtUtil.CLAIM_USER_ID, String.class);
         String tokenId = claims.getId();
+
+        Date issuedAt = claims.getIssuedAt();
+        long iatSeconds = (issuedAt != null) ? (issuedAt.getTime() / 1000) : 0;
+
+        // N3.d: Kiểm tra mốc khóa theo iat của refresh token bằng biến thể fail-closed
+        if (redisTokenService.isUserBlockedFailClosed(userId, iatSeconds)) {
+            log.warn("Refresh token bị từ chối do phát hành trước mốc khóa/thu hồi phiên (userId={}, iat={})",
+                    userId, iatSeconds);
+            throw new AppException(ErrorCode.TOKEN_REVOKED, "Phiên đăng nhập đã bị thu hồi, vui lòng đăng nhập lại");
+        }
 
         // T12: Phát hiện dùng lại token cũ (Replay / Theft detection)
         if (redisTokenService.isRefreshTokenUsed(userId, tokenId)) {
@@ -558,7 +580,8 @@ public class AuthServiceImpl implements AuthService {
         String rawToken = request.getResetToken() != null ? request.getResetToken().trim() : "";
         String tokenHash = hashOtp(rawToken);
 
-        String userId = redisTokenService.consumePasswordResetTokenAtomic(tokenHash);
+        // N2: Peek token fail-closed mà KHÔNG tiêu thụ token
+        String userId = redisTokenService.peekPasswordResetToken(tokenHash);
         if (!StringUtils.hasText(userId)) {
             throw new AppException(ErrorCode.RESET_TOKEN_INVALID,
                     "Mã xác thực đặt lại mật khẩu không hợp lệ hoặc đã hết hạn");
@@ -568,15 +591,28 @@ public class AuthServiceImpl implements AuthService {
                 .orElseThrow(() -> new AppException(ErrorCode.RESET_TOKEN_INVALID,
                         "Mã xác thực đặt lại mật khẩu không hợp lệ"));
 
-        // Kiểm tra chính sách mật khẩu
+        // N2: Kiểm tra chính sách mật khẩu TRƯỚC KHI tiêu thụ token
         passwordPolicyService.validatePassword(request.getNewPassword(), user.getEmail());
+
+        // N2: Tiêu thụ token atomic (nếu null do chạy đua -> RESET_TOKEN_INVALID)
+        String consumedUserId = redisTokenService.consumePasswordResetTokenAtomic(tokenHash);
+        if (!StringUtils.hasText(consumedUserId)) {
+            throw new AppException(ErrorCode.RESET_TOKEN_INVALID,
+                    "Mã xác thực đặt lại mật khẩu không hợp lệ hoặc đã hết hạn");
+        }
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
 
-        // Thu hồi toàn bộ phiên đăng nhập cũ
-        redisTokenService.revokeAllSessions(user.getId());
-        log.info("Đặt lại mật khẩu thành công cho user {}. Đã thu hồi toàn bộ phiên đăng nhập cũ.", user.getEmail());
+        // N3.c: Thu hồi toàn bộ phiên đăng nhập cũ; nếu lỗi thì log ERROR và ném lỗi rõ ràng
+        try {
+            redisTokenService.revokeAllSessions(user.getId());
+            log.info("Đặt lại mật khẩu thành công cho user {}. Đã thu hồi toàn bộ phiên đăng nhập cũ.", user.getEmail());
+        } catch (Exception ex) {
+            log.error("Mật khẩu của user {} đã đổi nhưng lỗi khi thu hồi toàn bộ phiên đăng nhập: {}", user.getEmail(), ex.getMessage());
+            throw new AppException(ErrorCode.INTERNAL_SERVER_ERROR,
+                    "mật khẩu đã đổi nhưng chưa đăng xuất được các thiết bị khác, hãy thử 'Đăng xuất tất cả'");
+        }
 
         // Gửi email thông báo đổi mật khẩu
         try {
@@ -584,74 +620,6 @@ public class AuthServiceImpl implements AuthService {
         } catch (Exception ex) {
             log.error("Không thể gửi email thông báo đổi mật khẩu cho {}: {}", user.getEmail(), ex.getMessage());
         }
-    }
-
-    @Override
-    public void sendVerificationOtp(String userId, SendOtpRequest request) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED));
-
-        otpThrottleService.checkAndRecordOtpRequest(user.getEmail(), "verify-account");
-
-        String rawOtp = generateOtp();
-        String hashedOtp = hashOtp(rawOtp);
-        user.setOtp(hashedOtp);
-        user.setOtpExpiryTime(Instant.now().plus(5, ChronoUnit.MINUTES));
-        userRepository.save(user);
-
-        redisTokenService.saveOtp("verify-account:" + user.getEmail(), hashedOtp, 300);
-        redisTokenService.resetOtpAttempts("verify-account:" + user.getEmail());
-
-        try {
-            emailService.sendOtpEmail(user.getEmail(), rawOtp);
-        } catch (Exception ex) {
-            if (isDevProfile()) {
-                log.warn("[DEV OTP FALLBACK] Mã OTP gửi lại cho email {}: [{}]", user.getEmail(), rawOtp);
-            } else {
-                log.warn("Không thể gửi email xác minh qua SMTP cho {}.", user.getEmail());
-            }
-        }
-    }
-
-    @Override
-    public void verifyAccount(String userId, VerifyAccountRequest request) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED));
-
-        String redisKey = "verify-account:" + user.getEmail();
-        String storedHash = redisTokenService.getOtp(redisKey);
-        if (!StringUtils.hasText(storedHash)) {
-            storedHash = user.getOtp();
-        }
-
-        String inputOtp = request.getOtp() != null ? request.getOtp().trim() : "";
-        String inputHash = hashOtp(inputOtp);
-
-        boolean match = isConstantTimeEqual(inputHash, storedHash);
-
-        if (!match) {
-            int attempts = redisTokenService.incrementOtpAttempts("verify-account:" + user.getEmail(), 300);
-            if (attempts >= MAX_OTP_ATTEMPTS) {
-                user.setOtp(null);
-                user.setOtpExpiryTime(null);
-                userRepository.save(user);
-                redisTokenService.deleteOtp(redisKey);
-                redisTokenService.resetOtpAttempts("verify-account:" + user.getEmail());
-                throw new AppException(ErrorCode.VALIDATION_ERROR,
-                        "Bạn đã nhập sai mã OTP quá 5 lần. Mã OTP đã bị hủy để đảm bảo an toàn, vui lòng yêu cầu mã mới.");
-            }
-            throw new AppException(ErrorCode.VALIDATION_ERROR,
-                    "Mã OTP xác minh không chính xác hoặc đã hết hạn (Lần thử " + attempts + "/" + MAX_OTP_ATTEMPTS + ")");
-        }
-
-        user.setActive(true);
-        user.setEmailVerified(true);
-        user.setOtp(null);
-        user.setOtpExpiryTime(null);
-        userRepository.save(user);
-
-        redisTokenService.deleteOtp(redisKey);
-        redisTokenService.resetOtpAttempts("verify-account:" + user.getEmail());
     }
 
     private String generateOtp() {

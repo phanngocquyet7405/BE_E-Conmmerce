@@ -75,22 +75,26 @@ Hệ thống áp dụng chính sách bảo mật mật khẩu và dữ liệu ch
      }
      ```
    - **Cơ chế**: Tài khoản được tạo với trạng thái `isActive = false`, `emailVerified = false`. Hệ thống sinh mã OTP 6 chữ số (hiệu lực **5 phút**) và gửi bất đồng bộ vào email của người dùng.
-   - **Đăng ký lại tài khoản chưa kích hoạt**: Nếu người dùng đăng ký lại bằng email của tài khoản chưa kích hoạt (`isActive == false && emailVerified == false`), hệ thống sẽ cập nhật thông tin họ tên, số điện thoại, mật khẩu mới và cấp OTP mới (tuân theo cooldown), không bị chặn lỗi email đã tồn tại. Nếu email đã kích hoạt, hệ thống trả HTTP 409 (`USER_ALREADY_EXISTS` - mã `1004`).
-   - **Lưu ý**: Nếu tài khoản chưa kích hoạt gọi `POST /api/v1/auth/login`, API trả lỗi HTTP 400 (`USER_NOT_ACTIVATED` - mã `1017`) sau khi đã xác thực mật khẩu chính xác.
+   - **Đăng ký lại tài khoản chưa kích hoạt (Chống Takeover)**: Nếu người dùng đăng ký lại bằng email của tài khoản chưa kích hoạt (`isActive == false && emailVerified == false`), hệ thống sẽ **giữ nguyên mật khẩu, họ tên, số điện thoại cũ** (không ghi đè để chống tấn công chiếm tài khoản trước kích hoạt) và chỉ cấp lại mã OTP mới (tuân theo throttle/cooldown). Nếu email đã kích hoạt, hệ thống trả HTTP 409 (`EMAIL_ALREADY_EXISTS` - mã `1007`).
+   - **Lưu ý**: Nếu tài khoản chưa kích hoạt gọi `POST /api/v1/auth/login`, sau khi xác thực mật khẩu chính xác, API trả lỗi HTTP 403 (`ACCOUNT_NOT_ACTIVATED` / `USER_NOT_ACTIVATED` - mã `1009`).
 
-2. **Xác thực OTP kích hoạt**: `POST /api/v1/auth/verify-account` hoặc `POST /api/v1/auth/verify-otp`
-   - **Body**:
+2. **Xác thực OTP kích hoạt (Bắt buộc kèm mật khẩu)**: `POST /api/v1/auth/verify-otp`
+   > [!IMPORTANT]
+   > **BREAKING CHANGE**: Endpoint `POST /api/v1/auth/verify-account` và `POST /api/v1/auth/send-verification-otp` đã bị **xóa bỏ hoàn toàn**. Frontend/Mobile chỉ sử dụng `POST /api/v1/auth/verify-otp`.
+   - **Body (Bắt buộc truyền password)**:
      ```json
      {
        "email": "customer@gmail.com",
-       "otp": "123456"
+       "otp": "123456",
+       "password": "Password123@"
      }
      ```
    - **Thành công**: Tài khoản chuyển sang `isActive = true`, `emailVerified = true`. Người dùng có thể tiến hành đăng nhập.
-   - **Chống Brute-Force & Tiết lộ thông tin**:
+   - **Chống Brute-Force & Tiết lộ thông tin (Anti-Enumeration)**:
+     - API kiểm tra đồng thời cả mã OTP và mật khẩu (sử dụng toán tử bitwise non-short-circuiting `&` và chạy bcrypt hash giả lập khi user không tồn tại/đã active).
+     - Sai OTP, sai mật khẩu, hoặc tài khoản không tồn tại/đã kích hoạt: Đều trả về cùng một mã lỗi HTTP 401 (`BAD_CREDENTIALS` - mã `1006`) với thông điệp `"Mã OTP hoặc mật khẩu không chính xác"`.
      - Sai quá **5 lần** cho một mã OTP: Mã OTP sẽ bị xóa ngay lập tức.
      - Sai quá **10 lần/giờ** cho một email: Khóa luồng OTP của email đó trong **1 giờ** (trả HTTP 429 - `OTP_MAX_ATTEMPTS_EXCEEDED` mã `1011`).
-     - Phản hồi đồng nhất: Nếu tài khoản không tồn tại hoặc đã kích hoạt mà nhập OTP sai, API đều trả chung lỗi HTTP 400 `INVALID_OTP` (mã `1016`), tuyệt đối không tiết lộ tài khoản tồn tại hay trạng thái kích hoạt.
 
 3. **Gửi lại OTP kích hoạt (Public)**: `POST /api/v1/auth/resend-verification-otp`
    - **Body**:
@@ -102,9 +106,6 @@ Hệ thống áp dụng chính sách bảo mật mật khẩu và dữ liệu ch
    - **Đặc điểm**: Endpoint công khai không cần token đăng nhập, dùng khi người dùng chưa nhận được email kích hoạt.
    - **Bảo mật phản hồi**: Luôn trả thông điệp thành công đồng nhất `{"code": 1000, "message": "Nếu email tồn tại và chưa kích hoạt, mã OTP mới đã được gửi thành công"}` bất kể email có tồn tại hay không.
    - **Rate Limit**: Tối đa 3 request/phút/IP (fail-closed HTTP 503 khi Redis lỗi). Giới hạn cooldown 60 giây giữa các lần nhận OTP và tối đa 5 OTP/giờ theo email (`OTP_THROTTLED` - mã `1010`).
-
-4. **Gửi lại OTP (Authenticated)**: `POST /api/v1/auth/send-verification-otp`
-   - Dành cho phiên người dùng đã có token đăng nhập cần xác thực lại email. Áp dụng chung giới hạn cooldown 60 giây và tối đa 5 OTP/giờ.
 
 ### 2.3. Đăng nhập & Quản lý Phiên (Login & Session Management)
 1. **Đăng nhập**: `POST /api/v1/auth/login`
@@ -419,37 +420,44 @@ stateDiagram-v2
 
 ---
 
-## 7. BẢNG MÃ LỖI HỆ THỐNG (ERROR CODES)
+## 7. BẢNG MÃ LỖI HỆ THỐNG CHUẨN XÁC TỪ CODE (ERROR CODES)
 
-| Mã lỗi | Enum Name | HTTP Status | Ý nghĩa & Hướng xử lý trên giao diện |
-| :--- | :--- | :---: | :--- |
-| `1000` | `SUCCESS` | 200 / 201 | Thao tác thành công. |
-| `1001` | `UNAUTHENTICATED` | 401 | Chưa đăng nhập hoặc token đã hết hạn / bị thu hồi -> Chuyển về màn hình đăng nhập. |
-| `1002` | `UNAUTHORIZED` / `ACCESS_DENIED` | 403 | Không có quyền truy cập chức năng này (ví dụ: Customer cố gọi API Admin). |
-| `1003` | `VALIDATION_ERROR` | 400 | Dữ liệu gửi lên không đúng định dạng (thiếu trường, sai regex, rỗng...). |
-| `1004` | `USER_ALREADY_EXISTS` | 409 | Email này đã được đăng ký trong hệ thống. |
-| `1005` | `INVALID_CREDENTIALS` | 401 | Email hoặc mật khẩu không chính xác. |
-| `1006` | `TOKEN_EXPIRED` | 401 | Access token hết hạn -> Gọi API `refresh-token`. |
-| `1007` | `INVALID_TOKEN` | 401 | Token không hợp lệ. |
-| `1010` | `OTP_THROTTLED` | 429 | Yêu cầu gửi OTP quá nhanh (cooldown 60s hoặc trần 5 OTP/giờ). Vui lòng thử lại sau. |
-| `1011` | `OTP_MAX_ATTEMPTS_EXCEEDED` | 429 | Nhập sai OTP quá 10 lần/giờ. Luồng OTP của email bị khóa tạm thời trong 1 giờ. |
-| `1012` | `AUTH_SERVICE_UNAVAILABLE` | 503 | Dịch vụ xác thực tạm thời không khả dụng do lỗi hạ tầng (Redis). Vui lòng thử lại sau. |
-| `1013` | `RESET_TOKEN_INVALID` | 400 | Mã đặt lại mật khẩu không hợp lệ, đã hết hạn (10 phút) hoặc đã được sử dụng. |
-| `1014` | `ACCOUNT_TEMP_LOCKED` | 429 | Tài khoản tạm thời bị khóa do đăng nhập sai nhiều lần (5 lần/IP hoặc 20 lần/email). Thử lại sau 15 phút. |
-| `1016` | `INVALID_OTP` | 400 | Mã OTP không đúng hoặc đã hết hạn (quá 5 phút). |
-| `1017` | `USER_NOT_ACTIVATED` | 400 | Tài khoản chưa xác thực OTP email -> Chuyển sang màn hình nhập OTP. |
-| `1018` | `USER_BLOCKED` | 403 | Tài khoản đã bị khóa bởi Quản trị viên. |
-| `3001` | `PRODUCT_NOT_FOUND` | 404 | Không tìm thấy sản phẩm (hoặc sản phẩm đang bị ẩn). |
-| `3002` | `INSUFFICIENT_STOCK` | 400 | Sản phẩm không đủ số lượng trong kho khi đặt hàng. |
-| `4001` | `ORDER_NOT_FOUND` | 404 | Đơn hàng không tồn tại hoặc không thuộc quyền sở hữu của user (IDOR prevention). |
-| `4002` | `ORDER_CANNOT_BE_CANCELLED` | 400 | Đơn hàng không ở trạng thái PENDING/UNPAID để hủy. |
-| `4004` | `INVALID_ORDER_STATUS_TRANSITION`| 400 | Chuyển đổi trạng thái đơn hàng không hợp lệ theo quy trình. |
-| `4005` | `ORDER_ALREADY_REFUNDED` | 400 | Đơn hàng đã được hoàn tiền trước đó. |
-| `5001` | `PAYMENT_FAILED` | 400 | Xử lý thanh toán thất bại. |
-| `5004` | `PAYMENT_METHOD_NOT_SUPPORTED` | 400 | Phương thức thanh toán chưa được hỗ trợ (chỉ chấp nhận COD và SEPAY). |
-| `5005` | `PAYMENT_REQUIRED_BEFORE_SHIPPING`| 400 | Đơn SEPAY chưa thanh toán (PAID), không thể chuyển sang giao hàng. |
-| `9001` | `TOO_MANY_REQUESTS` | 429 | Thao tác quá nhanh, vượt giới hạn Rate Limit (vui lòng thử lại sau 1 phút). |
-| `9999` | `INTERNAL_SERVER_ERROR` | 500 | Lỗi hệ thống máy chủ, vui lòng thử lại sau. |
+| Mã lỗi | Enum Name | HTTP Status | Thông báo mặc định trong code |
+| :---: | :--- | :---: | :--- |
+| `1001` | `UNAUTHENTICATED` | 401 | Bạn chưa đăng nhập hoặc phiên làm việc không hợp lệ |
+| `1002` | `TOKEN_EXPIRED` | 401 | Token đã hết hạn, vui lòng làm mới phiên đăng nhập |
+| `1003` | `INVALID_TOKEN` | 401 | Chữ ký hoặc cấu trúc Token không hợp lệ |
+| `1004` | `TOKEN_REVOKED` | 401 | Token này đã bị thu hồi hoặc đã đăng xuất |
+| `1005` | `ACCESS_DENIED` | 403 | Bạn không có quyền truy cập chức năng này (hoặc tài khoản đã bị khóa) |
+| `1006` | `BAD_CREDENTIALS` | 401 | Email hoặc mật khẩu không chính xác |
+| `1007` | `EMAIL_ALREADY_EXISTS` | 409 | Email này đã được đăng ký tài khoản |
+| `1008` | `PASSWORD_NOT_MATCH` | 400 | Mật khẩu hiện tại không chính xác |
+| `1009` | `ACCOUNT_NOT_ACTIVATED` / `USER_NOT_ACTIVATED` | 403 | Tài khoản chưa được kích hoạt, vui lòng kiểm tra email |
+| `1010` | `OTP_THROTTLED` | 429 | Yêu cầu mã OTP quá nhanh hoặc vượt quá giới hạn. Vui lòng thử lại sau. |
+| `1011` | `OTP_MAX_ATTEMPTS_EXCEEDED` | 429 | Bạn đã nhập sai mã OTP quá 10 lần trong 1 giờ. Vui lòng thử lại sau 1 giờ. |
+| `1012` | `AUTH_SERVICE_UNAVAILABLE` | 503 | Dịch vụ xác thực tạm thời không khả dụng, vui lòng thử lại sau. |
+| `1013` | `RESET_TOKEN_INVALID` | 400 | Mã xác thực đặt lại mật khẩu không hợp lệ hoặc đã hết hạn. |
+| `1014` | `ACCOUNT_TEMP_LOCKED` | 429 | Tài khoản tạm thời bị khóa do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau 15 phút. |
+| `2001` | `VALIDATION_ERROR` | 400 | Dữ liệu gửi lên không thỏa mãn yêu cầu (hoặc vi phạm chính sách mật khẩu) |
+| `2002` | `MALFORMED_JSON` | 400 | Định dạng JSON gửi lên bị sai cú pháp |
+| `2003` | `INVALID_FILE_TYPE` | 400 | Định dạng file không được hỗ trợ (chỉ chấp nhận JPEG, PNG, WEBP, GIF) |
+| `2004` | `FILE_SIZE_EXCEEDED` | 400 | Kích thước file vượt quá giới hạn tối đa cho phép (10MB) |
+| `2005` | `FILE_UPLOAD_FAILED` | 500 | Lỗi xảy ra trong quá trình lưu trữ file media |
+| `3001` | `PRODUCT_NOT_FOUND` | 404 | Không tìm thấy sản phẩm yêu cầu |
+| `3002` | `PRODUCT_SKU_EXISTS` | 409 | Mã SKU sản phẩm đã tồn tại |
+| `3003` | `CATEGORY_NOT_FOUND` | 404 | Không tìm thấy danh mục sản phẩm |
+| `3004` | `INSUFFICIENT_STOCK` | 400 | Số lượng trong kho không đủ đáp ứng |
+| `3005` | `CART_EMPTY` | 400 | Giỏ hàng hiện đang trống, không thể tiến hành đặt hàng |
+| `3006` | `CART_ITEM_NOT_FOUND` | 404 | Không tìm thấy sản phẩm này trong giỏ hàng |
+| `3007` | `BRAND_NOT_FOUND` | 404 | Không tìm thấy thương hiệu yêu cầu |
+| `4001` | `ADDRESS_NOT_FOUND` | 404 | Không tìm thấy địa chỉ giao hàng |
+| `5001` | `ORDER_NOT_FOUND` | 404 | Không tìm thấy đơn hàng yêu cầu |
+| `5002` | `ORDER_CANNOT_BE_CANCELLED` | 400 | Đơn hàng đã được xử lý/vận chuyển, không thể hủy |
+| `5003` | `INVALID_ORDER_STATUS_TRANSITION` | 400 | Chuyển trạng thái đơn hàng không hợp lệ |
+| `5004` | `PAYMENT_METHOD_NOT_SUPPORTED` | 400 | Phương thức thanh toán không được hỗ trợ hoặc chưa tích hợp |
+| `5005` | `PAYMENT_REQUIRED_BEFORE_SHIPPING` | 400 | Đơn hàng chưa thanh toán (PAID), không thể chuyển sang giao hàng |
+| `5006` | `ORDER_ALREADY_REFUNDED` | 400 | Đơn hàng đã được hoàn tiền trước đó |
+| `9999` | `INTERNAL_SERVER_ERROR` | 500 | Lỗi hệ thống máy chủ, vui lòng thử lại sau |
 
 
 ---
@@ -466,4 +474,6 @@ Các kỹ sư Frontend (Next.js) và Mobile (Android) cần lưu ý điều ch�
 | **4** | `POST /auth/logout` | Không có body | Có thể gửi body tùy chọn `{"refreshToken": "..."}` | Nếu gửi `refreshToken`, backend chỉ hủy đúng thiết bị hiện tại; nếu không gửi thì hủy toàn bộ thiết bị. |
 | **5** | `POST /auth/resend-verification-otp` | *Chưa có* | **Endpoint công khai mới**: Nhận `{"email": "..."}` | Không cần đăng nhập vẫn gửi lại được OTP kích hoạt. Luôn trả HTTP 200 message thành công đồng nhất. |
 | **6** | Chính sách mật khẩu | `min=6`, không trần, không check yếu | Bắt buộc **8 - 64 ký tự**, tối đa **72 byte UTF-8**, không trùng email, không nằm trong top mật khẩu phổ biến | Cần validate trên form FE trước khi submit để tránh người dùng bị backend từ chối. |
-| **7** | `POST /auth/verify-otp` | Trả `true` nếu user đã active | Luôn trả lỗi HTTP 400 `INVALID_OTP` nếu OTP sai, bất kể user đã active hay chưa | Chống rò rỉ trạng thái người dùng (enumeration). |
+| **7** | `POST /auth/verify-otp` | Nhận `{email, otp}` | **Bắt buộc nhận `{email, otp, password}`** | Bổ sung mật khẩu để triệt tiêu lỗ hổng Pre-Verification Account Takeover (N1). |
+| **8** | `POST /auth/verify-account` & `POST /auth/send-verification-otp` | Tồn tại | **ĐÃ XÓA BỎ HOÀN TOÀN** | Các endpoint thừa không dùng được cho tài khoản chưa kích hoạt (N6). |
+| **9** | `POST /auth/register` (đăng ký lại) | Ghi đè mật khẩu & thông tin cũ | **Không ghi đè mật khẩu/họ tên/SĐT**, chỉ cấp lại OTP mới | Bảo vệ mật khẩu đã thiết lập của chủ email thực sự (N1). |

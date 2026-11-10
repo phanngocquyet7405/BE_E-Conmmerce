@@ -48,5 +48,7 @@ services:
         sync: false
       - key: SEPAY_BANK_ACCOUNT
         sync: false
+      - key: SEPAY_ACCOUNT_HOLDER
+        sync: false
       - key: SEPAY_WEBHOOK_SECRET
         sync: false

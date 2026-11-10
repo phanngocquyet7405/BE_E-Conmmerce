@@ -19,6 +19,7 @@ import com.ecommerce.service.SePayService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
@@ -128,9 +129,12 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     public PageResponse<SePayTransactionResponse> getTransactionsForAdmin(SePayTransactionStatus status, Pageable pageable) {
+        int safePage = Math.max(pageable.getPageNumber(), 0);
+        int safeSize = Math.min(Math.max(pageable.getPageSize(), 1), 50);
+        Pageable safePageable = PageRequest.of(safePage, safeSize, pageable.getSort());
         Page<SePayTransaction> page = (status != null)
-                ? sePayTransactionRepository.findByStatusOrderByCreatedAtDesc(status, pageable)
-                : sePayTransactionRepository.findAllByOrderByCreatedAtDesc(pageable);
+                ? sePayTransactionRepository.findByStatusOrderByCreatedAtDesc(status, safePageable)
+                : sePayTransactionRepository.findAllByOrderByCreatedAtDesc(safePageable);
         return PageResponse.fromPage(page.map(SePayTransactionResponse::fromEntity));
     }
 

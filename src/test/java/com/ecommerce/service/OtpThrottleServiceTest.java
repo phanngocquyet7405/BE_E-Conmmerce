@@ -41,7 +41,7 @@ class OtpThrottleServiceTest {
         AppProperties.Auth auth = new AppProperties.Auth();
         auth.setOtpCooldownSeconds(60);
         auth.setOtpMaxPerHour(5);
-        when(appProperties.getAuth()).thenReturn(auth);
+        lenient().when(appProperties.getAuth()).thenReturn(auth);
         lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
@@ -51,14 +51,16 @@ class OtpThrottleServiceTest {
         String email = "test@gmail.com";
         String purpose = "verify-account";
 
-        when(stringRedisTemplate.hasKey("otp_cooldown:" + purpose + ":" + email)).thenReturn(false);
-        when(valueOperations.get("otp_hourly:" + purpose + ":" + email)).thenReturn("2");
-        when(valueOperations.increment("otp_hourly:" + purpose + ":" + email)).thenReturn(3L);
+        when(valueOperations.setIfAbsent(eq("otp_cooldown:" + purpose + ":" + email), eq("1"), eq(Duration.ofSeconds(60))))
+                .thenReturn(true);
+        when(valueOperations.increment("otp_hourly:" + purpose + ":" + email)).thenReturn(1L);
+        when(stringRedisTemplate.getExpire("otp_hourly:" + purpose + ":" + email)).thenReturn(-1L);
 
         assertDoesNotThrow(() -> otpThrottleService.checkAndRecordOtpRequest(email, purpose));
 
-        verify(valueOperations, times(1)).set(eq("otp_cooldown:" + purpose + ":" + email), eq("1"), eq(Duration.ofSeconds(60)));
+        verify(valueOperations, times(1)).setIfAbsent(eq("otp_cooldown:" + purpose + ":" + email), eq("1"), eq(Duration.ofSeconds(60)));
         verify(valueOperations, times(1)).increment("otp_hourly:" + purpose + ":" + email);
+        verify(stringRedisTemplate, times(1)).expire("otp_hourly:" + purpose + ":" + email, Duration.ofHours(1));
     }
 
     @Test
@@ -67,7 +69,8 @@ class OtpThrottleServiceTest {
         String email = "test@gmail.com";
         String purpose = "verify-account";
 
-        when(stringRedisTemplate.hasKey("otp_cooldown:" + purpose + ":" + email)).thenReturn(true);
+        when(valueOperations.setIfAbsent(eq("otp_cooldown:" + purpose + ":" + email), eq("1"), eq(Duration.ofSeconds(60))))
+                .thenReturn(false);
         when(stringRedisTemplate.getExpire("otp_cooldown:" + purpose + ":" + email)).thenReturn(45L);
 
         AppException ex = assertThrows(AppException.class, () -> otpThrottleService.checkAndRecordOtpRequest(email, purpose));
@@ -81,8 +84,10 @@ class OtpThrottleServiceTest {
         String email = "test@gmail.com";
         String purpose = "verify-account";
 
-        when(stringRedisTemplate.hasKey("otp_cooldown:" + purpose + ":" + email)).thenReturn(false);
-        when(valueOperations.get("otp_hourly:" + purpose + ":" + email)).thenReturn("5");
+        when(valueOperations.setIfAbsent(eq("otp_cooldown:" + purpose + ":" + email), eq("1"), eq(Duration.ofSeconds(60))))
+                .thenReturn(true);
+        when(valueOperations.increment("otp_hourly:" + purpose + ":" + email)).thenReturn(6L);
+        when(stringRedisTemplate.getExpire("otp_hourly:" + purpose + ":" + email)).thenReturn(3500L);
 
         AppException ex = assertThrows(AppException.class, () -> otpThrottleService.checkAndRecordOtpRequest(email, purpose));
         assertEquals(ErrorCode.OTP_THROTTLED, ex.getErrorCode());
@@ -95,7 +100,8 @@ class OtpThrottleServiceTest {
         String email = "test@gmail.com";
         String purpose = "verify-account";
 
-        when(stringRedisTemplate.hasKey(anyString())).thenThrow(new RuntimeException("Redis connection refused"));
+        when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class)))
+                .thenThrow(new RuntimeException("Redis connection refused"));
 
         AppException ex = assertThrows(AppException.class, () -> otpThrottleService.checkAndRecordOtpRequest(email, purpose));
         assertEquals(ErrorCode.AUTH_SERVICE_UNAVAILABLE, ex.getErrorCode());

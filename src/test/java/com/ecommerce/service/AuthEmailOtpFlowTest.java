@@ -175,16 +175,19 @@ class AuthEmailOtpFlowTest {
         User user = User.builder()
                 .id("u2")
                 .email(email)
+                .password("encoded_pass")
                 .active(false)
                 .otp(hashedOtp)
                 .otpExpiryTime(Instant.now().plus(4, ChronoUnit.MINUTES))
                 .build();
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("password123", "encoded_pass")).thenReturn(true);
 
         VerifyOtpRequest request = VerifyOtpRequest.builder()
                 .email(email)
                 .otp(rawOtp)
+                .password("password123")
                 .build();
 
         boolean result = authService.verifyOtp(request);
@@ -208,17 +211,20 @@ class AuthEmailOtpFlowTest {
         User user = User.builder()
                 .id("u2")
                 .email(email)
+                .password("encoded_pass")
                 .active(false)
                 .otp(hashedOtp)
                 .otpExpiryTime(Instant.now().plus(4, ChronoUnit.MINUTES))
                 .build();
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("password123", "encoded_pass")).thenReturn(true);
         when(redisTokenService.incrementOtpAttempts("verify-account:" + email, 300)).thenReturn(1);
 
         VerifyOtpRequest request = VerifyOtpRequest.builder()
                 .email(email)
                 .otp("000000") // Sai OTP
+                .password("password123")
                 .build();
 
         AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
@@ -237,17 +243,20 @@ class AuthEmailOtpFlowTest {
         User user = User.builder()
                 .id("u2")
                 .email(email)
+                .password("encoded_pass")
                 .active(false)
                 .otp(hashedOtp)
                 .otpExpiryTime(Instant.now().plus(4, ChronoUnit.MINUTES))
                 .build();
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("password123", "encoded_pass")).thenReturn(true);
         when(redisTokenService.incrementOtpAttempts("verify-account:" + email, 300)).thenReturn(5);
 
         VerifyOtpRequest request = VerifyOtpRequest.builder()
                 .email(email)
                 .otp("999999")
+                .password("password123")
                 .build();
 
         AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
@@ -300,6 +309,7 @@ class AuthEmailOtpFlowTest {
         verify(redisTokenService, times(1)).savePasswordResetToken(eq("u-reset"), anyString(), eq(600L));
 
         // Bước 2b: Đặt lại mật khẩu bằng resetToken
+        when(redisTokenService.peekPasswordResetToken(anyString())).thenReturn("u-reset");
         when(redisTokenService.consumePasswordResetTokenAtomic(anyString())).thenReturn("u-reset");
         when(userRepository.findById("u-reset")).thenReturn(Optional.of(user));
 
@@ -318,7 +328,7 @@ class AuthEmailOtpFlowTest {
     @Test
     @DisplayName("7b. Đặt lại mật khẩu thất bại khi resetToken sai, hết hạn hoặc đã tiêu thụ")
     void resetPassword_InvalidOrExpiredToken_ThrowsResetTokenInvalid() {
-        when(redisTokenService.consumePasswordResetTokenAtomic(anyString())).thenReturn(null);
+        when(redisTokenService.peekPasswordResetToken(anyString())).thenReturn(null);
 
         ResetPasswordRequest request = new ResetPasswordRequest();
         request.setResetToken("invalid_or_expired_token");
@@ -383,6 +393,8 @@ class AuthEmailOtpFlowTest {
         VerifyOtpRequest request = new VerifyOtpRequest();
         request.setEmail(email);
         request.setOtp("wrong_random_otp");
+        request.setPassword("password123");
+        request.setPassword("password123");
 
         AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
         assertEquals(ErrorCode.VALIDATION_ERROR, ex.getErrorCode());
@@ -409,6 +421,8 @@ class AuthEmailOtpFlowTest {
         User userA = User.builder().id("user-A").email("usera@ecommerce.com").password("old_pass_A").build();
         User userB = User.builder().id("user-B").email("userb@ecommerce.com").password("old_pass_B").build();
 
+        when(redisTokenService.peekPasswordResetToken(tokenHash)).thenReturn("user-A");
+        when(redisTokenService.peekPasswordResetToken(tokenHash)).thenReturn("user-A");
         when(redisTokenService.consumePasswordResetTokenAtomic(tokenHash)).thenReturn("user-A");
         when(userRepository.findById("user-A")).thenReturn(Optional.of(userA));
         when(passwordEncoder.encode("new_pass_for_A")).thenReturn("encoded_pass_A");
@@ -540,29 +554,37 @@ class AuthEmailOtpFlowTest {
     }
 
     @Test
-    @DisplayName("12. Đăng ký lại khi tài khoản chưa kích hoạt: Cập nhật thông tin và cấp lại OTP mới")
+    @DisplayName("12. Đăng ký lại khi tài khoản chưa kích hoạt: Không ghi đè thông tin cũ, chỉ cấp lại OTP mới (N1)")
     void register_UnverifiedUser_UpdatesAndResendsOtp() {
         String email = "unverified2@gmail.com";
+        Instant createdAt = Instant.now().minus(1, ChronoUnit.HOURS);
         User existingUser = User.builder()
                 .id("u6")
                 .email(email)
                 .fullName("Old Name")
+                .phone("0912345678")
+                .password("old_encoded_pass")
+                .createdAt(createdAt)
                 .active(false)
                 .emailVerified(false)
                 .build();
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(existingUser));
-        when(passwordEncoder.encode("new_password123")).thenReturn("encoded_new");
 
         RegisterRequest request = new RegisterRequest();
         request.setEmail(email);
         request.setFullName("New Name");
+        request.setPhone("0987654321");
         request.setPassword("new_password123");
 
         authService.register(request);
 
-        assertEquals("New Name", existingUser.getFullName());
-        assertEquals("encoded_new", existingUser.getPassword());
+        assertEquals("Old Name", existingUser.getFullName());
+        assertEquals("0912345678", existingUser.getPhone());
+        assertEquals("old_encoded_pass", existingUser.getPassword());
+        assertEquals(createdAt, existingUser.getCreatedAt());
+        assertNotNull(existingUser.getOtp());
+        assertNotNull(existingUser.getOtpExpiryTime());
         verify(userRepository, times(1)).save(existingUser);
         verify(emailService, times(1)).sendOtpEmail(eq(email), anyString());
     }
@@ -616,6 +638,7 @@ class AuthEmailOtpFlowTest {
         VerifyOtpRequest request = VerifyOtpRequest.builder()
                 .email(email)
                 .otp("123456")
+                .password("password123")
                 .build();
 
         AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
@@ -633,6 +656,7 @@ class AuthEmailOtpFlowTest {
         VerifyOtpRequest request = VerifyOtpRequest.builder()
                 .email(email)
                 .otp("123456")
+                .password("password123")
                 .build();
 
         AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
@@ -753,5 +777,275 @@ class AuthEmailOtpFlowTest {
         AppException ex = assertThrows(AppException.class, () -> authService.login(req, "10.0.0.2"));
         assertEquals(ErrorCode.ACCOUNT_TEMP_LOCKED, ex.getErrorCode());
         assertTrue(ex.getMessage().contains("15 phút"));
+    }
+
+    // ==================== BỔ SUNG CÁC TEST CHO N1 - N5 VÀ N9 ====================
+
+    @Test
+    @DisplayName("N1: verifyOtp với đúng OTP nhưng sai mật khẩu -> Bị từ chối và user vẫn inactive")
+    void verifyOtp_WrongPassword_ThrowsException_UserRemainsInactive() {
+        String email = "wrongpass_verify@ecommerce.com";
+        String rawOtp = "123456";
+        String hashedOtp = hashOtp(rawOtp);
+
+        User user = User.builder()
+                .id("u-n1-1")
+                .email(email)
+                .password("encoded_real_password")
+                .active(false)
+                .emailVerified(false)
+                .otp(hashedOtp)
+                .otpExpiryTime(Instant.now().plus(4, ChronoUnit.MINUTES))
+                .build();
+
+        when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrong_password", "encoded_real_password")).thenReturn(false);
+        when(redisTokenService.incrementOtpAttempts("verify-account:" + email, 300)).thenReturn(1);
+
+        VerifyOtpRequest request = VerifyOtpRequest.builder()
+                .email(email)
+                .otp(rawOtp)
+                .password("wrong_password")
+                .build();
+
+        AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
+        assertEquals(ErrorCode.VALIDATION_ERROR, ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("không chính xác"));
+        assertFalse(user.isActive(), "Tài khoản phải giữ nguyên active = false khi sai mật khẩu");
+        verify(redisTokenService, times(1)).incrementHourlyFailedAttempts("verify-account", email, 3600);
+    }
+
+    @Test
+    @DisplayName("N1: verifyOtp đúng cả OTP và mật khẩu -> Kích hoạt tài khoản thành công")
+    void verifyOtp_CorrectOtpAndCorrectPassword_Success_ActivatesUser() {
+        String email = "correct_both@ecommerce.com";
+        String rawOtp = "123456";
+        String hashedOtp = hashOtp(rawOtp);
+
+        User user = User.builder()
+                .id("u-n1-2")
+                .email(email)
+                .password("encoded_correct_password")
+                .active(false)
+                .emailVerified(false)
+                .otp(hashedOtp)
+                .otpExpiryTime(Instant.now().plus(4, ChronoUnit.MINUTES))
+                .build();
+
+        when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("correct_pass123", "encoded_correct_password")).thenReturn(true);
+
+        VerifyOtpRequest request = VerifyOtpRequest.builder()
+                .email(email)
+                .otp(rawOtp)
+                .password("correct_pass123")
+                .build();
+
+        boolean result = authService.verifyOtp(request);
+        assertTrue(result);
+        assertTrue(user.isActive());
+        assertTrue(user.isEmailVerified());
+        assertNull(user.getOtp());
+        verify(userRepository, times(1)).save(user);
+        verify(redisTokenService, times(1)).resetOtpAttempts("verify-account:" + email);
+    }
+
+    @Test
+    @DisplayName("N1: verifyOtp khi user không tồn tại -> Trả cùng lỗi và tính bộ đếm")
+    void verifyOtp_NonExistentUser_ReturnsSameErrorAndConstantTimeComparison() {
+        String email = "ghost_verify@ecommerce.com";
+        when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
+        when(redisTokenService.incrementOtpAttempts("verify-account:" + email, 300)).thenReturn(1);
+
+        VerifyOtpRequest request = VerifyOtpRequest.builder()
+                .email(email)
+                .otp("123456")
+                .password("any_password")
+                .build();
+
+        AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
+        assertEquals(ErrorCode.VALIDATION_ERROR, ex.getErrorCode());
+        verify(passwordEncoder, times(1)).matches(eq("any_password"), anyString());
+        verify(redisTokenService, times(1)).incrementHourlyFailedAttempts("verify-account", email, 3600);
+    }
+
+    @Test
+    @DisplayName("N2: resetPassword mật khẩu yếu bị từ chối -> ResetToken VẪN giữ nguyên, chưa bị tiêu thụ")
+    void resetPassword_WeakPassword_ThrowsException_TokenRemainsValid() {
+        String rawToken = "valid_reset_token_weak_pass";
+        String tokenHash = hashOtp(rawToken);
+
+        User user = User.builder().id("u-n2-1").email("weak@ecommerce.com").build();
+        when(redisTokenService.peekPasswordResetToken(tokenHash)).thenReturn("u-n2-1");
+        when(userRepository.findById("u-n2-1")).thenReturn(Optional.of(user));
+        doThrow(new AppException(ErrorCode.VALIDATION_ERROR, "Mật khẩu quá yếu"))
+                .when(passwordPolicyService).validatePassword(eq("123456"), eq("weak@ecommerce.com"));
+
+        ResetPasswordRequest request = new ResetPasswordRequest();
+        request.setResetToken(rawToken);
+        request.setNewPassword("123456");
+
+        AppException ex = assertThrows(AppException.class, () -> authService.resetPassword(request));
+        assertEquals(ErrorCode.VALIDATION_ERROR, ex.getErrorCode());
+
+        // Khẳng định: Chưa từng tiêu thụ token, chưa lưu mật khẩu mới
+        verify(redisTokenService, never()).consumePasswordResetTokenAtomic(anyString());
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("N2: resetPassword đồng thời với cùng token -> Chỉ 1 request tiêu thụ thành công")
+    void resetPassword_ConcurrentRequests_OnlyOneSucceeds() {
+        String rawToken = "concurrent_reset_token";
+        String tokenHash = hashOtp(rawToken);
+
+        User user = User.builder().id("u-n2-2").email("concurrent@ecommerce.com").build();
+        when(redisTokenService.peekPasswordResetToken(tokenHash)).thenReturn("u-n2-2");
+        when(userRepository.findById("u-n2-2")).thenReturn(Optional.of(user));
+        // Giả lập request 2 đến sau khi token đã bị request 1 tiêu thụ
+        when(redisTokenService.consumePasswordResetTokenAtomic(tokenHash)).thenReturn(null);
+
+        ResetPasswordRequest request = new ResetPasswordRequest();
+        request.setResetToken(rawToken);
+        request.setNewPassword("ValidNewPassword123@");
+
+        AppException ex = assertThrows(AppException.class, () -> authService.resetPassword(request));
+        assertEquals(ErrorCode.RESET_TOKEN_INVALID, ex.getErrorCode());
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("N2 & N9: resetPassword thành công -> Tiêu thụ token, hash mật khẩu, thu hồi phiên và gửi email")
+    void resetPassword_Success_ConsumesTokenHashesPasswordRevokesSessionsSendsEmail() {
+        String rawToken = "valid_full_reset_token";
+        String tokenHash = hashOtp(rawToken);
+
+        User user = User.builder().id("u-n2-3").email("full_reset@ecommerce.com").build();
+        when(redisTokenService.peekPasswordResetToken(tokenHash)).thenReturn("u-n2-3");
+        when(userRepository.findById("u-n2-3")).thenReturn(Optional.of(user));
+        when(redisTokenService.consumePasswordResetTokenAtomic(tokenHash)).thenReturn("u-n2-3");
+        when(passwordEncoder.encode("ValidNewPassword123@")).thenReturn("encoded_new_secret");
+
+        ResetPasswordRequest request = new ResetPasswordRequest();
+        request.setResetToken(rawToken);
+        request.setNewPassword("ValidNewPassword123@");
+
+        assertDoesNotThrow(() -> authService.resetPassword(request));
+
+        assertEquals("encoded_new_secret", user.getPassword());
+        verify(userRepository, times(1)).save(user);
+        verify(redisTokenService, times(1)).revokeAllSessions("u-n2-3");
+        verify(emailService, times(1)).sendPasswordChangedEmail("full_reset@ecommerce.com");
+    }
+
+    @Test
+    @DisplayName("N9: verifyResetOtp thành công ở mức service -> Cấp resetToken và lưu vào Redis")
+    void verifyResetOtp_Success_GeneratesResetToken() {
+        String email = "reset_service@ecommerce.com";
+        String rawOtp = "123456";
+        String hashedOtp = hashOtp(rawOtp);
+
+        User user = User.builder().id("u-reset-svc").email(email).build();
+        when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(redisTokenService.getOtp("forgot-password:" + email)).thenReturn(hashedOtp);
+
+        com.ecommerce.dto.request.VerifyResetOtpRequest request =
+                new com.ecommerce.dto.request.VerifyResetOtpRequest(email, rawOtp);
+
+        com.ecommerce.dto.response.VerifyResetOtpResponse response = authService.verifyResetOtp(request);
+        assertNotNull(response);
+        assertNotNull(response.getResetToken());
+        assertEquals(600L, response.getExpiresIn());
+
+        verify(redisTokenService, times(1)).deleteOtp("forgot-password:" + email);
+        verify(redisTokenService, times(1)).savePasswordResetToken(eq("u-reset-svc"), anyString(), eq(600L));
+    }
+
+    @Test
+    @DisplayName("N3.d: refreshToken bị từ chối khi token phát hành trước mốc khóa user")
+    void refreshToken_Rejected_WhenIssuedBeforeBlockTimestamp() {
+        String refreshToken = "sample_refresh_token_blocked";
+        Claims claims = mock(Claims.class);
+        Date issuedAt = new Date(System.currentTimeMillis() - 10000); // 10s trước
+        when(claims.get(JwtUtil.CLAIM_USER_ID, String.class)).thenReturn("u-blocked-token");
+        when(claims.getIssuedAt()).thenReturn(issuedAt);
+        when(jwtUtil.verifyRefreshToken(refreshToken)).thenReturn(claims);
+
+        // Biến thể fail-closed trả về true do token phát hành trước mốc khóa
+        when(redisTokenService.isUserBlockedFailClosed(eq("u-blocked-token"), anyLong())).thenReturn(true);
+
+        RefreshTokenRequest req = new RefreshTokenRequest(refreshToken);
+        AppException ex = assertThrows(AppException.class, () -> authService.refreshToken(req));
+        assertEquals(ErrorCode.TOKEN_REVOKED, ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("đã bị thu hồi"));
+    }
+
+    @Test
+    @DisplayName("N3.d: refreshToken khi Redis lỗi -> Lan ra AUTH_SERVICE_UNAVAILABLE (fail-closed)")
+    void refreshToken_RedisUnavailable_ThrowsAuthServiceUnavailable() {
+        String refreshToken = "sample_refresh_token_redis_down";
+        Claims claims = mock(Claims.class);
+        when(claims.get(JwtUtil.CLAIM_USER_ID, String.class)).thenReturn("u-redis-down");
+        when(claims.getIssuedAt()).thenReturn(new Date());
+        when(jwtUtil.verifyRefreshToken(refreshToken)).thenReturn(claims);
+
+        when(redisTokenService.isUserBlockedFailClosed(eq("u-redis-down"), anyLong()))
+                .thenThrow(new AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "Dịch vụ xác thực tạm thời không khả dụng"));
+
+        RefreshTokenRequest req = new RefreshTokenRequest(refreshToken);
+        AppException ex = assertThrows(AppException.class, () -> authService.refreshToken(req));
+        assertEquals(ErrorCode.AUTH_SERVICE_UNAVAILABLE, ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("N3.a: revokeAllSessions khi Redis lỗi -> Lan ra AUTH_SERVICE_UNAVAILABLE")
+    void revokeAllSessions_RedisError_ThrowsAuthServiceUnavailable() {
+        doThrow(new AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE, "Lỗi kết nối Redis"))
+                .when(redisTokenService).revokeAllSessions("u-redis-err");
+
+        AppException ex = assertThrows(AppException.class, () -> redisTokenService.revokeAllSessions("u-redis-err"));
+        assertEquals(ErrorCode.AUTH_SERVICE_UNAVAILABLE, ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("N4: Đăng nhập thành công -> Xóa cả bộ đếm theo IP và bộ đếm theo email")
+    void login_Success_ResetsBothIpAndEmailFailCounters() {
+        String email = "login_success@ecommerce.com";
+        User user = User.builder()
+                .id("u-login-ok")
+                .email(email)
+                .password("encoded_pass")
+                .active(true)
+                .emailVerified(true)
+                .roles(Set.of(RoleEnum.ROLE_CUSTOMER))
+                .build();
+
+        when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("valid_pass", "encoded_pass")).thenReturn(true);
+        when(jwtUtil.generateAccessToken(any())).thenReturn("mock_access_token");
+        when(jwtUtil.generateRefreshToken(any(), anyString())).thenReturn("mock_refresh_token");
+
+        LoginRequest req = new LoginRequest(email, "valid_pass");
+        assertDoesNotThrow(() -> authService.login(req, "192.168.1.100"));
+
+        // Khẳng định: resetLoginFailure được gọi với đúng email và IP
+        verify(redisTokenService, times(1)).resetLoginFailure(email, "192.168.1.100");
+    }
+
+    @Test
+    @DisplayName("N9: verifyOtp khi Redis lỗi -> Lan ra AUTH_SERVICE_UNAVAILABLE (fail-closed)")
+    void verifyOtp_RedisUnavailable_ThrowsAuthServiceUnavailable() {
+        String email = "redis_down_verify@ecommerce.com";
+        when(redisTokenService.getHourlyFailedAttempts("verify-account", email))
+                .thenThrow(new RuntimeException("Redis down"));
+
+        VerifyOtpRequest request = VerifyOtpRequest.builder()
+                .email(email)
+                .otp("123456")
+                .password("password123")
+                .build();
+
+        AppException ex = assertThrows(AppException.class, () -> authService.verifyOtp(request));
+        assertEquals(ErrorCode.AUTH_SERVICE_UNAVAILABLE, ex.getErrorCode());
     }
 }

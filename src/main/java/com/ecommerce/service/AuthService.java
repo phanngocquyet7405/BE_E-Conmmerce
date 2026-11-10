@@ -45,7 +45,5 @@ public interface AuthService {
 
     void resetPassword(ResetPasswordRequest request);
 
-    void sendVerificationOtp(String userId, SendOtpRequest request);
 
-    void verifyAccount(String userId, VerifyAccountRequest request);
 }

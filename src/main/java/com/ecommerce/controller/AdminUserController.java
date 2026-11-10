@@ -7,6 +7,8 @@ import com.ecommerce.common.response.PageResponse;
 import com.ecommerce.dto.request.AdminUserCriteria;
 import com.ecommerce.dto.response.AdminUserResponse;
 import com.ecommerce.security.CustomUserDetails;
+import com.ecommerce.exception.AppException;
+import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -63,8 +65,11 @@ public class AdminUserController {
             @AuthenticationPrincipal CustomUserDetails adminDetails,
             @PathVariable String userId,
             @RequestBody Map<String, Boolean> body) {
+        if (body == null || !body.containsKey("active") || body.get("active") == null) {
+            throw new AppException(ErrorCode.VALIDATION_ERROR, "Trường 'active' là bắt buộc");
+        }
         String currentAdminId = adminDetails != null ? adminDetails.getId() : "";
-        boolean active = body.getOrDefault("active", true);
+        boolean active = body.get("active");
 
         return ResponseEntity.ok(ApiResponse.ok("Cập nhật trạng thái người dùng thành công",
                 userService.updateUserStatus(currentAdminId, userId, active)));
@@ -76,6 +81,9 @@ public class AdminUserController {
             @AuthenticationPrincipal CustomUserDetails adminDetails,
             @PathVariable String userId,
             @RequestBody Set<RoleEnum> roles) {
+        if (roles == null || roles.isEmpty()) {
+            throw new AppException(ErrorCode.VALIDATION_ERROR, "Danh sách vai trò không được để trống");
+        }
         String currentAdminId = adminDetails != null ? adminDetails.getId() : "";
 
         return ResponseEntity.ok(ApiResponse.ok("Cập nhật vai trò người dùng thành công",

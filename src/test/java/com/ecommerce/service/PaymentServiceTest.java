@@ -219,4 +219,23 @@ class PaymentServiceTest {
         assertEquals("Đã đối soát thủ công và xác nhận với ngân hàng", response.getAdminNote());
         assertEquals(com.ecommerce.document.SePayTransactionStatus.PROCESSED, response.getStatus());
     }
+
+    @Test
+    @DisplayName("11. getTransactionsForAdmin giới hạn trần size tối đa 50 phần tử chống DoS")
+    void getTransactionsForAdmin_ClampsPageSizeTo50() {
+        org.springframework.data.domain.Page<com.ecommerce.document.SePayTransaction> emptyPage =
+                new org.springframework.data.domain.PageImpl<>(java.util.Collections.emptyList());
+
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> pageableCaptor =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+
+        when(sePayTransactionRepository.findAllByOrderByCreatedAtDesc(pageableCaptor.capture()))
+                .thenReturn(emptyPage);
+
+        paymentService.getTransactionsForAdmin(null, org.springframework.data.domain.PageRequest.of(0, 500));
+
+        org.springframework.data.domain.Pageable captured = pageableCaptor.getValue();
+        assertEquals(50, captured.getPageSize());
+        assertEquals(0, captured.getPageNumber());
+    }
 }

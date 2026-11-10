@@ -133,32 +133,4 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok("Đặt lại mật khẩu thành công. Vui lòng đăng nhập với mật khẩu mới.", null));
     }
 
-    /**
-     * 8. Gửi lại mã OTP xác minh tài khoản (cho User đã đăng nhập)
-     */
-    @PostMapping(ApiRoutes.Auth.SEND_VERIFICATION_OTP)
-    public ResponseEntity<ApiResponse<Void>> sendVerificationOtp(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
-            @RequestBody(required = false) SendOtpRequest request) {
-        if (userDetails == null) {
-            throw new com.ecommerce.exception.AppException(com.ecommerce.exception.ErrorCode.UNAUTHENTICATED);
-        }
-        SendOtpRequest req = request != null ? request : new SendOtpRequest();
-        authService.sendVerificationOtp(userDetails.getId(), req);
-        return ResponseEntity.ok(ApiResponse.ok("Đã gửi mã xác minh tài khoản", null));
-    }
-
-    /**
-     * 9. Xác minh Email bằng mã OTP
-     */
-    @PostMapping(ApiRoutes.Auth.VERIFY_ACCOUNT)
-    public ResponseEntity<ApiResponse<Void>> verifyAccount(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
-            @Valid @RequestBody VerifyAccountRequest request) {
-        if (userDetails == null) {
-            throw new com.ecommerce.exception.AppException(com.ecommerce.exception.ErrorCode.UNAUTHENTICATED);
-        }
-        authService.verifyAccount(userDetails.getId(), request);
-        return ResponseEntity.ok(ApiResponse.ok("Xác minh tài khoản thành công", null));
-    }
 }
