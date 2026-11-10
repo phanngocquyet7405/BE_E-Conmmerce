@@ -8,6 +8,7 @@ import com.ecommerce.security.RateLimitFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -25,6 +26,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -58,6 +60,9 @@ public class SecurityConfig {
                 .accessDeniedHandler(accessDeniedHandler)
             )
             .authorizeHttpRequests(auth -> auth
+                // 0. Cho phép toàn bộ preflight request OPTIONS
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
                 // 1. Nhóm Router công khai & Health check
                 .requestMatchers(
                     "/health",
@@ -108,16 +113,21 @@ public class SecurityConfig {
 
         if (origins != null && !origins.isEmpty()) {
             List<String> safeOrigins = origins.stream()
+                    .flatMap(origin -> Arrays.stream(origin.split(",")))
                     .map(String::trim)
                     .filter(o -> !o.equals("*") && !o.isBlank())
                     .toList();
             if (!safeOrigins.isEmpty()) {
-                configuration.setAllowedOrigins(safeOrigins);
+                List<String> exactOrigins = safeOrigins.stream().filter(o -> !o.contains("*")).toList();
+                if (!exactOrigins.isEmpty()) {
+                    configuration.setAllowedOrigins(exactOrigins);
+                }
+                configuration.setAllowedOriginPatterns(safeOrigins);
             }
         }
 
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "X-Requested-With", "X-SePay-Signature", "X-SePay-Timestamp"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"));
+        configuration.setAllowedHeaders(List.of("*"));
         configuration.setExposedHeaders(List.of("Retry-After", "Authorization"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
