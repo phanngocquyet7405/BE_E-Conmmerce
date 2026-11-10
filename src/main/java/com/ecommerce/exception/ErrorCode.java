@@ -43,6 +43,8 @@ public enum ErrorCode {
 
     // 4xxx: Profile & Address
     ADDRESS_NOT_FOUND(4001, "Không tìm thấy địa chỉ giao hàng", HttpStatus.NOT_FOUND),
+    ADDRESS_LIMIT_EXCEEDED(4002, "Số lượng địa chỉ nhận hàng đã đạt giới hạn tối đa", HttpStatus.BAD_REQUEST),
+    METHOD_NOT_ALLOWED(4005, "Phương thức HTTP không được hỗ trợ cho đường dẫn này", HttpStatus.METHOD_NOT_ALLOWED),
 
     // 5xxx: Order & Checkout
     ORDER_NOT_FOUND(5001, "Không tìm thấy đơn hàng yêu cầu", HttpStatus.NOT_FOUND),

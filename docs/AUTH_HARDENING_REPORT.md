@@ -4,7 +4,7 @@
 > **Package mục tiêu**: `com.ecommerce` (Auth, Security, Profile, Controllers toàn dự án)  
 > **Thời điểm cập nhật**: 2026-11-10  
 > **Người thực hiện**: Senior Backend Engineer (Antigravity Agent)  
-> **Cam kết**: Tuân thủ 100% quy tắc chống bịa thông tin; mọi nhận định kèm `file:dòng` đã được xác minh bằng `grep`; 100% tên test, ErrorCode, endpoint được trích xuất từ mã nguồn thực tế.
+> **Cam kết**: Tuân thủ nghiêm ngặt quy tắc chống bịa thông tin; mọi nhận định kèm `file:dòng` đã được xác minh bằng `grep`; mọi tên test, ErrorCode, endpoint được trích xuất từ mã nguồn thực tế.
 
 ---
 
@@ -157,14 +157,14 @@ Theo quy định nghiêm ngặt về tính trung thực thông tin, báo cáo gh
 | **N3** | Thu hồi phiên chưa chắc chắn, dùng KEYS (Trung bình) | **ĐÚNG** (`RedisTokenServiceImpl.java:34` cũ dùng `keys()` và nuốt lỗi) | Thay `keys()` bằng `scan()` theo batch 100; lỗi lan truyền thành `AUTH_SERVICE_UNAVAILABLE`; `revokeAllSessions` xóa token trước rồi ghi block; `refreshToken` check fail-closed mốc khóa. | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
 | **N4** | `resetLoginFailure` chỉ xóa theo IP (Thấp) | **ĐÚNG** (`RedisTokenServiceImpl.java:252` cũ chỉ xóa IP prefix) | Sửa `resetLoginFailure` xóa đồng thời cả key IP (`login_fail_ip:`) và key Email (`login_fail_email:`). | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
 | **N5** | Throttle OTP check-then-act không atomic (Thấp) | **ĐÚNG** (`OtpThrottleServiceImpl.java:33` cũ check get rồi mới set) | Cooldown dùng `setIfAbsent` nguyên tử; đếm giờ dùng `increment` trước rồi so sánh trần, luôn đảm bảo set expire TTL khi key mới. | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
-| **N6** | Endpoint thừa cho user chưa kích hoạt (Thấp) | **ĐÚNG** (`send-verification-otp` và `verify-account` yêu cầu Principal nhưng user chưa active không login được) | Xóa bỏ hoàn toàn 2 endpoint, DTOs liên quan, service methods và route constants khỏi codebase. | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
+| **N6** | Endpoint thừa cho user chưa kích hoạt (Thấp) | **ĐÚNG** (`send-verification-otp` và `verify-account` yêu cầu Principal nhưng user chưa active không login được) | Đã xóa bỏ 2 endpoint, DTOs liên quan, service methods và route constants khỏi codebase. | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
 | **N7** | Thiếu tài liệu hành vi khi Redis lỗi (Thấp) | **ĐÚNG** (Chưa có tài liệu chi tiết ma trận fail-open/fail-closed) | Thêm Mục 7 "Bảng ma trận hành vi khi Redis lỗi" vào `docs/DEPLOYMENT_GUIDE.md` cho 16 thao tác kèm `file:dòng`. | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
 | **N8** | Báo cáo cũ sai lệch tên và mã lỗi | **ĐÚNG** (Phát hiện 26 tên test sai và nhiều ErrorCode không khớp) | Thêm Mục 4 "Đính chính các sai sót trong báo cáo đợt trước" và đính chính toàn bộ tên test trong báo cáo. | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
 | **N9** | Bổ sung các unit test còn thiếu | **ĐÚNG** (Thiếu test phủ N1-N5 và các nhánh ngoại lệ) | Viết bổ sung 12 unit tests trong `AuthEmailOtpFlowTest` và 2 tests trong `ProfileServiceTest`. | `ĐÃ LÀM, UNIT TEST (MOCK) PASS` (Tests run: 169) |
 
 ### 5.2. Chi tiết Kỹ thuật Các Hạng mục Gia Cố
 
-#### N1: Triệt tiêu Lỗ hổng Chiếm Tài Khoản Trước Xác Thực (Pre-Verification Account Takeover)
+#### N1: Phòng Chống Lỗ hổng Chiếm Tài Khoản Trước Xác Thực (Pre-Verification Account Takeover)
 - **Vấn đề**: Kẻ tấn công phát hiện email của nạn nhân chưa kích hoạt, gửi request `register` với cùng email nhưng đổi mật khẩu thành mật khẩu của kẻ tấn công. Khi nạn nhân nhận được OTP và bấm xác thực, tài khoản sẽ được kích hoạt với mật khẩu của kẻ tấn công.
 - **Giải pháp**:
   1. Trong `AuthServiceImpl.java:80`: Khi đăng ký lại email chưa active, **giữ nguyên mật khẩu, họ tên, số điện thoại cũ**, chỉ cấp lại OTP mới và trả phản hồi thành công.
@@ -192,7 +192,7 @@ Theo quy định nghiêm ngặt về tính trung thực thông tin, báo cáo gh
 #### N3: Thu Hồi Toàn Bộ Phiên Đăng Nhập Chắc Chắn và Không Dùng `KEYS`
 - **Vấn đề**: `deleteAllRefreshTokensForUser` sử dụng lệnh `redisTemplate.keys()`, gây block luồng sự kiện Redis và nuốt ngoại lệ. Luồng refresh token không kiểm tra mốc khóa người dùng.
 - **Giải pháp**:
-  1. Thay thế hoàn toàn `keys()` bằng `scan()` với `ScanOptions.scanOptions().match(...).count(100).build()`.
+  1. Chuyển đổi từ `keys()` sang `scan()` với `ScanOptions.scanOptions().match(...).count(100).build()`.
   2. Trong `revokeAllSessions`: xóa refresh token trước, sau đó ghi mốc khóa `user:blocked-at:<userId>` (epoch seconds) với TTL 7 ngày. Lỗi Redis được ném ra thành `AUTH_SERVICE_UNAVAILABLE`.
   3. Bổ sung `isUserBlockedFailClosed(String userId, long tokenIssuedAtSeconds)` vào `RedisTokenService.java:34`. Luồng `refreshToken` bắt buộc kiểm tra mốc khóa fail-closed.
   4. Trong `ProfileServiceImpl.java:59` và `AuthServiceImpl.java:214`: Lưu mật khẩu trước, sau đó mới gọi `revokeAllSessions`. Nếu thu hồi lỗi, ghi log ERROR và ném `INTERNAL_SERVER_ERROR` thông báo mật khẩu đã đổi nhưng chưa đăng xuất được các thiết bị khác.
@@ -223,9 +223,13 @@ Theo quy định nghiêm ngặt về tính trung thực thông tin, báo cáo gh
 
 ## 6. KẾT QUẢ RÀ SOÁT CONTROLLER TOÀN DỰ ÁN (C1 - C5)
 
-### 6.1. C1: Bảng Kiểm Kê Toàn Bộ 14 Controllers và 29 Endpoints
+### 6.1. C1: Bảng Kiểm Kê Toàn Bộ 14 Controllers và 67 Mappings (Đính chính 2026-11-10)
 
 Hệ thống bật `@EnableMethodSecurity` tại `src/main/java/com/ecommerce/config/SecurityConfig.java:32`. Mọi annotation `@PreAuthorize("hasRole('ADMIN')")` đều được Spring Security thực thi nghiêm ngặt tại Controller layer kết hợp với bộ lọc `requestMatchers` tại Filter Chain.
+
+> **Đính chính ngày 2026-11-10**: Tiêu đề trước đây ghi nhầm 29 endpoints. Lệnh grep kiểm tra chính xác các mapping phương thức (loại trừ `@RequestMapping` cấp class):
+> `grep -E -n '@(Get|Post|Put|Patch|Delete)Mapping|@RequestMapping\(' src/main/java/com/ecommerce/controller/*.java`
+> Tổng số mapping phương thức thực tế là **67**, khớp đúng 67 dòng được kiểm kê chi tiết trong bảng dưới đây.
 
 | STT | Controller (`file:dòng`) | HTTP & Đường dẫn API | Quyền hạn (SecurityConfig & Annotation) | Service Phương thức được gọi |
 | :-: | :--- | :--- | :--- | :--- |
@@ -306,7 +310,7 @@ Hệ thống bật `@EnableMethodSecurity` tại `src/main/java/com/ecommerce/co
 | **SEC-1** | `PaymentServiceImpl.java:130` | Trung bình | `getTransactionsForAdmin` nhận `Pageable` trực tiếp từ Controller mà không giới hạn trần `size`, có thể bị client gửi `size=100000` làm cạn kiệt RAM 512MB heap. | Giới hạn trần cứng `size = Math.min(Math.max(pageable.getPageSize(), 1), 50)`. | **SỬA NGAY** |
 | **SEC-2** | `AdminUserController.java:65,81` | Thấp | `updateUserStatus` dùng `body.getOrDefault("active", true)` gây NullPointerException nếu body null/empty; `updateUserRoles` không check roles null/empty. | Thêm validate kiểm tra `body == null || !body.containsKey("active")` và `roles == null || roles.isEmpty()`, ném `VALIDATION_ERROR`. | **SỬA NGAY** |
 | **SEC-3** | `GlobalExceptionHandler.java:160,173` | Thấp | Thiếu handler bắt lỗi `MissingServletRequestParameterException` và `HttpRequestMethodNotSupportedException` dẫn đến trả về mã 500 thay vì 400 và 405. | Bổ sung 2 `@ExceptionHandler` chuyên biệt trả về mã HTTP chuẩn mực (400 và 405). | **SỬA NGAY** |
-| **SEC-4** | `SePayWebhookController.java:26` | Nghiêm ngặt | Đã thẩm tra: Xác thực HMAC-SHA256 constant-time bằng `MessageDigest.isEqual`, chống replay 300s, chống trùng lặp `existsBySepayId` và bắt `DuplicateKeyException`, đối soát luỹ kế nguyên tử. | Giữ nguyên 100% logic thanh toán theo nguyên tắc không can thiệp Payment. | **CHỈ BÁO CÁO** |
+| **SEC-4** | `SePayWebhookController.java:26` | Nghiêm ngặt | Đã thẩm tra: Xác thực HMAC-SHA256 constant-time bằng `MessageDigest.isEqual`, chống replay 300s, chống trùng lặp `existsBySepayId` và bắt `DuplicateKeyException`, đối soát luỹ kế nguyên tử. | Giữ nguyên logic thanh toán theo nguyên tắc không can thiệp Payment. | **CHỈ BÁO CÁO** |
 
 ---
 
@@ -583,6 +587,6 @@ Output nguyên văn:
 
 ## 10. KẾT LUẬN & HƯỚNG DẪN BÀN GIAO TIẾP THEO
 
-1. **Về bảo mật Auth**: Triệt tiêu hoàn toàn nguy cơ chiếm tài khoản trước kích hoạt (N1), rò rỉ hoặc mất resetToken khi mật khẩu yếu (N2), bảo đảm thu hồi phiên đăng nhập chắc chắn không gây nghẽn Redis (N3, N4, N5), dọn sạch các route thừa (N6).
-2. **Về Controller toàn dự án**: Toàn bộ 14 Controllers và 29 Endpoints đã được kiểm kê và rà soát an toàn phân quyền, phân trang chống tràn RAM, và bẫy lỗi HTTP chuẩn mực.
+1. **Về bảo mật Auth**: Ngăn chặn nguy cơ chiếm tài khoản trước kích hoạt (N1), rò rỉ hoặc mất resetToken khi mật khẩu yếu (N2), thu hồi phiên đăng nhập chắc chắn không gây nghẽn Redis (N3, N4, N5), dọn sạch các route thừa (N6).
+2. **Về Controller toàn dự án**: Toàn bộ 14 Controllers và 67 Mappings đã được kiểm kê và rà soát an toàn phân quyền, phân trang chống tràn RAM, và bẫy lỗi HTTP chuẩn mực.
 3. **Về định hướng tương lai**: Đã xây dựng lộ trình chi tiết tại `ROADMAP.md` với 26 hạng mục được xếp loại độ phức tạp, rủi ro và thứ tự ưu tiên khả thi cho môi trường 512MB RAM.

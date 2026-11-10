@@ -15,6 +15,7 @@ import com.ecommerce.service.OtpThrottleService;
 import com.ecommerce.service.PasswordPolicyService;
 import com.ecommerce.service.RedisTokenService;
 import com.ecommerce.dto.response.VerifyResetOtpResponse;
+import com.ecommerce.util.DataMaskingUtil;
 import com.ecommerce.util.JwtUtil;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
@@ -106,13 +107,13 @@ public class AuthServiceImpl implements AuthService {
 
             try {
                 emailService.sendOtpEmail(email, rawOtp);
-                log.info("Đã cập nhật thông tin và gửi lại OTP xác thực cho tài khoản chưa kích hoạt: {}", email);
+                log.info("Đã cập nhật thông tin và gửi lại OTP xác thực cho tài khoản chưa kích hoạt: {}", DataMaskingUtil.maskEmail(email));
             } catch (Exception ex) {
                 if (isDevProfile()) {
                     log.warn("Không thể gửi email qua SMTP: {}. => [DEV OTP FALLBACK] Mã OTP cho email {}: [{}]",
                             ex.getMessage(), email, rawOtp);
                 } else {
-                    log.error("Không thể gửi email xác minh đến {} qua SMTP.", email, ex);
+                    log.error("Không thể gửi email xác minh đến {} qua SMTP.", DataMaskingUtil.maskEmail(email), ex);
                 }
             }
             return;
@@ -140,7 +141,7 @@ public class AuthServiceImpl implements AuthService {
         try {
             userRepository.save(user);
         } catch (org.springframework.dao.DuplicateKeyException ex) {
-            log.warn("Xảy ra va chạm unique key khi đăng ký đồng thời email {}: {}", email, ex.getMessage());
+            log.warn("Xảy ra va chạm unique key khi đăng ký đồng thời email {}: {}", DataMaskingUtil.maskEmail(email), ex.getMessage());
             throw new AppException(ErrorCode.EMAIL_ALREADY_EXISTS);
         }
 
@@ -149,7 +150,7 @@ public class AuthServiceImpl implements AuthService {
 
         try {
             emailService.sendOtpEmail(email, rawOtp);
-            log.info("Đã tạo tài khoản cho {} và gửi OTP xác thực thành công.", email);
+            log.info("Đã tạo tài khoản cho {} và gửi OTP xác thực thành công.", DataMaskingUtil.maskEmail(email));
         } catch (Exception ex) {
             if (isDevProfile()) {
                 log.warn("Không thể gửi email qua SMTP: {}. => [DEV OTP FALLBACK] Mã OTP cho email {}: [{}]",
@@ -187,7 +188,7 @@ public class AuthServiceImpl implements AuthService {
 
             try {
                 emailService.sendOtpEmail(email, rawOtp);
-                log.info("Đã gửi lại mã OTP xác thực cho tài khoản chưa kích hoạt: {}", email);
+                log.info("Đã gửi lại mã OTP xác thực cho tài khoản chưa kích hoạt: {}", DataMaskingUtil.maskEmail(email));
             } catch (Exception ex) {
                 if (isDevProfile()) {
                     log.warn("[DEV OTP FALLBACK] Mã OTP gửi lại cho email {}: [{}]", email, rawOtp);
@@ -196,7 +197,7 @@ public class AuthServiceImpl implements AuthService {
                 }
             }
         } else {
-            log.info("Gửi lại OTP: Email [{}] không thỏa điều kiện gửi lại (không tồn tại, đã verify, hoặc bị khóa).", email);
+            log.info("Gửi lại OTP: Email [{}] không thỏa điều kiện gửi lại (không tồn tại, đã verify, hoặc bị khóa).", DataMaskingUtil.maskEmail(email));
         }
     }
 
@@ -283,7 +284,7 @@ public class AuthServiceImpl implements AuthService {
             redisTokenService.deleteOtp(redisKey);
             redisTokenService.resetOtpAttempts("verify-account:" + email);
 
-            log.info("Tài khoản {} đã được kích hoạt thành công qua mã OTP và mật khẩu.", email);
+            log.info("Tài khoản {} đã được kích hoạt thành công qua mã OTP và mật khẩu.", DataMaskingUtil.maskEmail(email));
             return true;
         } catch (AppException e) {
             throw e;
@@ -314,7 +315,7 @@ public class AuthServiceImpl implements AuthService {
         int failsEmail = redisTokenService.getLoginFailAttemptsByEmail(email);
         if (failsIp >= MAX_LOGIN_FAILS_PER_IP || failsEmail >= MAX_LOGIN_FAILS_PER_EMAIL) {
             log.warn("Đăng nhập bị khóa tạm thời cho email [{}] từ IP [{}]: failsIp={}, failsEmail={}",
-                    email, clientIp, failsIp, failsEmail);
+                    DataMaskingUtil.maskEmail(email), clientIp, failsIp, failsEmail);
             throw new AppException(ErrorCode.ACCOUNT_TEMP_LOCKED,
                     "Tài khoản hoặc thiết bị tạm thời bị khóa do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau 15 phút.");
         }
@@ -336,7 +337,7 @@ public class AuthServiceImpl implements AuthService {
 
         if (!passwordMatches) {
             redisTokenService.recordLoginFailure(email, clientIp, LOGIN_LOCKOUT_DURATION_SECONDS);
-            log.warn("Đăng nhập thất bại: Sai email hoặc mật khẩu cho [{}] từ IP [{}]", email, clientIp);
+            log.warn("Đăng nhập thất bại: Sai email hoặc mật khẩu cho [{}] từ IP [{}]", DataMaskingUtil.maskEmail(email), clientIp);
             throw new AppException(ErrorCode.BAD_CREDENTIALS);
         }
 
@@ -475,7 +476,7 @@ public class AuthServiceImpl implements AuthService {
 
         User user = userRepository.findByEmail(identity).orElse(null);
         if (user == null) {
-            log.info("Quên mật khẩu: Email không tồn tại trên hệ thống [{}], trả phản hồi đồng nhất an toàn.", identity);
+            log.info("Quên mật khẩu: Email không tồn tại trên hệ thống [{}], trả phản hồi đồng nhất an toàn.", DataMaskingUtil.maskEmail(identity));
             return;
         }
 
@@ -496,7 +497,7 @@ public class AuthServiceImpl implements AuthService {
             if (isDevProfile()) {
                 log.warn("[DEV OTP FALLBACK] Mã OTP quên mật khẩu cho email {}: [{}]", identity, rawOtp);
             } else {
-                log.error("Không thể gửi email OTP quên mật khẩu đến {}.", identity, ex);
+                log.error("Không thể gửi email OTP quên mật khẩu đến {}.", DataMaskingUtil.maskEmail(identity), ex);
             }
         }
     }
@@ -560,7 +561,7 @@ public class AuthServiceImpl implements AuthService {
 
         redisTokenService.savePasswordResetToken(user.getId(), tokenHash, expiresInSeconds);
 
-        log.info("Xác thực OTP quên mật khẩu thành công cho {}. Đã cấp resetToken.", identity);
+        log.info("Xác thực OTP quên mật khẩu thành công cho {}. Đã cấp resetToken.", DataMaskingUtil.maskEmail(identity));
         return VerifyResetOtpResponse.builder()
                 .resetToken(resetToken)
                 .expiresIn(expiresInSeconds)
@@ -607,10 +608,10 @@ public class AuthServiceImpl implements AuthService {
         // N3.c: Thu hồi toàn bộ phiên đăng nhập cũ; nếu lỗi thì log ERROR và ném lỗi rõ ràng
         try {
             redisTokenService.revokeAllSessions(user.getId());
-            log.info("Đặt lại mật khẩu thành công cho user {}. Đã thu hồi toàn bộ phiên đăng nhập cũ.", user.getEmail());
+            log.info("Đặt lại mật khẩu thành công cho user {}. Đã thu hồi toàn bộ phiên đăng nhập cũ.", DataMaskingUtil.maskEmail(user.getEmail()));
         } catch (Exception ex) {
-            log.error("Mật khẩu của user {} đã đổi nhưng lỗi khi thu hồi toàn bộ phiên đăng nhập: {}", user.getEmail(), ex.getMessage());
-            throw new AppException(ErrorCode.INTERNAL_SERVER_ERROR,
+            log.error("Mật khẩu của user {} đã đổi nhưng lỗi khi thu hồi toàn bộ phiên đăng nhập: {}", DataMaskingUtil.maskEmail(user.getEmail()), ex.getMessage());
+            throw new AppException(ErrorCode.AUTH_SERVICE_UNAVAILABLE,
                     "mật khẩu đã đổi nhưng chưa đăng xuất được các thiết bị khác, hãy thử 'Đăng xuất tất cả'");
         }
 
@@ -618,7 +619,7 @@ public class AuthServiceImpl implements AuthService {
         try {
             emailService.sendPasswordChangedEmail(user.getEmail());
         } catch (Exception ex) {
-            log.error("Không thể gửi email thông báo đổi mật khẩu cho {}: {}", user.getEmail(), ex.getMessage());
+            log.error("Không thể gửi email thông báo đổi mật khẩu cho {}: {}", DataMaskingUtil.maskEmail(user.getEmail()), ex.getMessage());
         }
     }
 

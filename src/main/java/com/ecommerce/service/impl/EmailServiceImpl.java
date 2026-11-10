@@ -4,6 +4,7 @@ import com.ecommerce.service.EmailService;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
+import com.ecommerce.util.DataMaskingUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -82,12 +83,12 @@ public class EmailServiceImpl implements EmailService {
                 helper.setText(htmlContent, true);
 
                 mailSender.send(message);
-                log.info("Đã gửi email thành công tới: {} (lần thử {})", toEmail, attempt);
+                log.info("Đã gửi email thành công tới: {} (lần thử {})", DataMaskingUtil.maskEmail(toEmail), attempt);
                 return;
             } catch (Exception e) {
-                log.error("Lỗi khi gửi email tới {} (lần thử {}/{}): {}", toEmail, attempt, maxAttempts, e.getMessage());
+                log.error("Lỗi khi gửi email tới {} (lần thử {}/{}): {}", DataMaskingUtil.maskEmail(toEmail), attempt, maxAttempts, e.getMessage());
                 if (attempt == maxAttempts) {
-                    log.error("Gửi email tới {} thất bại hoàn toàn sau {} lần thử.", toEmail, maxAttempts);
+                    log.error("Gửi email tới {} thất bại hoàn toàn sau {} lần thử.", DataMaskingUtil.maskEmail(toEmail), maxAttempts);
                 }
             }
         }

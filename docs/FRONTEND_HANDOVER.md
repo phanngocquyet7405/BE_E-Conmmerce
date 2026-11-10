@@ -119,8 +119,8 @@ Hệ thống áp dụng chính sách bảo mật mật khẩu và dữ liệu ch
    - **Response**: Trả về `accessToken` (JWT thời hạn ngắn), `refreshToken` (thời hạn 7 ngày, lưu Redis whitelist), thông tin `user`.
    - **Chống Timing Attack & Trích xuất thông tin (Anti-Enumeration)**:
      - Hệ thống luôn kiểm tra mật khẩu trước (chạy giả lập hashing nếu user không tồn tại để cân bằng thời gian thực thi).
-     - Sai mật khẩu hoặc email không tồn tại đều trả về cùng lỗi HTTP 401 (`INVALID_CREDENTIALS` - mã `1005`).
-     - Chỉ khi mật khẩu ĐÚNG, hệ thống mới kiểm tra trạng thái tài khoản: `USER_NOT_ACTIVATED` (mã `1017`) hoặc `USER_BLOCKED` (mã `1018`).
+     - Sai mật khẩu hoặc email không tồn tại đều trả về cùng lỗi HTTP 401 (`BAD_CREDENTIALS` - mã `1006`).
+     - Chỉ khi mật khẩu ĐÚNG, hệ thống mới kiểm tra trạng thái tài khoản: `ACCOUNT_NOT_ACTIVATED` (mã `1009`) hoặc `ACCESS_DENIED` (mã `1005`).
    - **Khóa tạm thời chống Brute-Force (`ACCOUNT_TEMP_LOCKED` - mã `1014`, HTTP 429)**:
      - Sai quá **5 lần trong 15 phút** từ cùng một cặp (Email + IP).
      - Sai quá **20 lần trong 15 phút** trên cùng một Email từ các IP khác nhau.
@@ -136,7 +136,7 @@ Hệ thống áp dụng chính sách bảo mật mật khẩu và dữ liệu ch
    - **Response**: Cấp cặp token mới (`accessToken` và `refreshToken` xoay vòng).
    - **Bảo mật Xoay vòng & Phát hiện Token Bị đánh cắp (Theft Detection)**:
      - Mỗi refresh token chỉ được sử dụng đúng một lần và bị thu hồi nguyên tử (`atomic delete`).
-     - Token cũ được đưa vào danh sách kiểm soát `used-refresh` trong 7 ngày. Nếu một refresh token cũ được gửi lại (dấu hiệu bị attacker đánh cắp và gửi lại sau khi user thật đã refresh), hệ thống lập tức phát hiện nguy cơ và **thu hồi toàn bộ phiên đăng nhập của người dùng trên mọi thiết bị** ngay lập tức (`INVALID_TOKEN` - mã `1007`).
+     - Token cũ được đưa vào danh sách kiểm soát `used-refresh` trong 7 ngày. Nếu một refresh token cũ được gửi lại (dấu hiệu bị attacker đánh cắp và gửi lại sau khi user thật đã refresh), hệ thống lập tức phát hiện nguy cơ và **thu hồi toàn bộ phiên đăng nhập của người dùng trên mọi thiết bị** ngay lập tức (`TOKEN_REVOKED` - mã `1004`).
 
 3. **Đăng xuất (Logout)**: `POST /api/v1/auth/logout`
    - **Header**: `Authorization: Bearer <accessToken>` (chấp nhận cả access token đã hết hạn để người dùng luôn đăng xuất được).
@@ -252,7 +252,66 @@ sequenceDiagram
 
 ---
 
-## 3. SẢN PHẨM & DANH MỤC (PRODUCTS & CATEGORIES)
+## 3. THÔNG TIN NGƯỜI DÙNG & SỔ ĐỊA CHỈ GIAO HÀNG (PROFILE & ADDRESS BOOK)
+
+> [!TIP]
+> Xem toàn bộ đặc tả chi tiết các trường, validation, tọa độ GPS, nhãn và quy tắc bất biến tại:  
+> **[ADDRESS_API_CONTRACT.md](ADDRESS_API_CONTRACT.md)**
+
+### 3.1. Thông tin cá nhân (Profile)
+1. **Lấy thông tin cá nhân**: `GET /api/v1/profile/me`
+   - Header: `Authorization: Bearer <accessToken>`
+   - Trả về: Thông tin user, email, phone, avatarUrl, danh sách quyền và danh sách địa chỉ.
+2. **Cập nhật thông tin cá nhân**: `PUT /api/v1/profile/me`
+   - Body: `{"fullName": "...", "phone": "0987654321", "avatarUrl": "..."}`
+3. **Đổi mật khẩu (Người dùng đã đăng nhập)**: `POST /api/v1/profile/change-password`
+   - Body: `{"oldPassword": "...", "newPassword": "..."}`
+   - Ràng buộc: Mật khẩu mới tuân thủ Password Policy (8-64 ký tự, <= 72 bytes, không chứa email, không phổ biến, khác mật khẩu cũ).
+   - Thu hồi toàn bộ phiên đăng nhập cũ trên mọi thiết bị.
+
+### 3.2. Sổ địa chỉ nhận hàng (Address Book)
+Khách hàng có thể lưu trữ tối đa **10 địa chỉ nhận hàng** (vượt quá trả HTTP 400 `ADDRESS_LIMIT_EXCEEDED` - mã `4002`).
+
+1. **Danh sách địa chỉ**: `GET /api/v1/profile/addresses`
+2. **Thêm địa chỉ mới**: `POST /api/v1/profile/addresses`
+   - **Body mẫu đầy đủ**:
+     ```json
+     {
+       "recipientName": "Nguyễn Văn A",
+       "phone": "0987654321",
+       "province": "TP Hồ Chí Minh",
+       "district": "Quận 1",
+       "ward": "Phường Bến Nghé",
+       "streetAddress": "72 Lê Thánh Tôn",
+       "label": "OFFICE",
+       "note": "Giao giờ hành chính",
+       "latitude": 10.7769,
+       "longitude": 106.7009,
+       "provinceCode": "79",
+       "districtCode": "760",
+       "wardCode": "26734",
+       "isDefault": true
+     }
+     ```
+   - **Bất biến**: Nếu là địa chỉ đầu tiên của tài khoản, hệ thống luôn tự động đặt `isDefault: true`.
+3. **Cập nhật địa chỉ**: `PUT /api/v1/profile/addresses/{addressId}`
+   - Cập nhật toàn bộ các trường; nếu địa chỉ là mặc định duy nhất, không thể chuyển thành `isDefault: false`.
+4. **Xóa địa chỉ**: `DELETE /api/v1/profile/addresses/{addressId}`
+   - Nếu `addressId` không tồn tại, trả HTTP 404 (`ADDRESS_NOT_FOUND` - mã `4001`).
+   - Nếu xóa địa chỉ mặc định, địa chỉ đầu tiên còn lại tự động được thăng hạng làm mặc định.
+5. **Đặt làm mặc định**: `PUT /api/v1/profile/addresses/{addressId}/default`
+   - Chuyển địa chỉ mục tiêu thành mặc định và các địa chỉ khác thành `false`.
+
+### 3.3. Quy chuẩn & Lưu ý Kỹ thuật quan trọng cho FE & Android
+- **Khóa JSON `isDefault`**: Request chấp nhận cả `"isDefault"`, `"default"`, `"is_default"`. Response luôn trả về `"isDefault"`.
+- **Trường `district` (Quận/Huyện)**: Là trường tùy chọn (hỗ trợ mô hình hành chính 2 cấp). Nếu không có, truyền `null` hoặc chuỗi rỗng.
+- **Trường `label`**: Nhận các giá trị enum `HOME`, `OFFICE`, `OTHER`.
+- **Tọa độ GPS (`latitude`, `longitude`)**: Tùy chọn; nếu truyền thì bắt buộc truyền cả hai trường trong phạm vi hợp lệ `[-90, 90]` và `[-180, 180]`.
+- **Deep Snapshot khi Checkout**: Khi gọi `POST /api/v1/orders`, hệ thống snapshot toàn bộ địa chỉ tại thời điểm đặt hàng. Sửa/xóa địa chỉ sau này không ảnh hưởng đến đơn hàng cũ.
+
+---
+
+## 4. SẢN PHẨM & DANH MỤC (PRODUCTS & CATEGORIES)
 
 ### 3.1. Phía Khách hàng (Public)
 - `GET /api/v1/public/products`: Danh sách sản phẩm đang bán (`active: true`), hỗ trợ tìm kiếm từ khóa, khoảng giá, phân loại, thương hiệu.
@@ -270,7 +329,7 @@ sequenceDiagram
 
 ---
 
-## 4. GIỎ HÀNG, ĐẶT HÀNG & THANH TOÁN (ORDER & PAYMENT)
+## 5. GIỎ HÀNG, ĐẶT HÀNG & THANH TOÁN (ORDER & PAYMENT)
 
 ### 4.1. Lựa chọn phương thức thanh toán khả dụng
 Trước khi hiển thị trang thanh toán (Checkout), FE gọi API:
@@ -301,26 +360,17 @@ Trước khi hiển thị trang thanh toán (Checkout), FE gọi API:
 > **Quyết định D1 đã chốt**: Chỉ hỗ trợ **COD** và **SEPAY**.
 > Nếu gửi `MOMO`, `VNPAY` hoặc `BANKING` lên API Checkout, hệ thống sẽ từ chối với lỗi HTTP 400 (`PAYMENT_METHOD_NOT_SUPPORTED` - mã `5004`).
 
-### 4.2. Đặt hàng (Checkout)
+### 5.2. Đặt hàng (Checkout)
 - `POST /api/v1/orders`
 - **Body**:
   ```json
   {
-    "customerName": "Nguyễn Văn A",
-    "customerEmail": "customer@gmail.com",
-    "customerPhone": "0987654321",
-    "shippingAddress": {
-      "fullName": "Nguyễn Văn A",
-      "phone": "0987654321",
-      "province": "Hà Nội",
-      "district": "Cầu Giấy",
-      "ward": "Dịch Vọng",
-      "streetAddress": "Số 123 Cầu Giấy"
-    },
+    "addressId": "7a3f81e2-9b4c-4e8a-bf92-6d2c4e1a8b90",
     "paymentMethod": "SEPAY",
     "note": "Giao giờ hành chính"
   }
   ```
+  *(Lưu ý: Khách hàng chọn địa chỉ từ sổ địa chỉ qua `addressId`. Thông tin khách hàng và địa chỉ được hệ thống tự động trích xuất và snapshot sâu).*
 - **Response**: Trả về `OrderResponse`:
   - `status`: `PENDING`
   - `paymentStatus`: `UNPAID`
@@ -451,6 +501,8 @@ stateDiagram-v2
 | `3006` | `CART_ITEM_NOT_FOUND` | 404 | Không tìm thấy sản phẩm này trong giỏ hàng |
 | `3007` | `BRAND_NOT_FOUND` | 404 | Không tìm thấy thương hiệu yêu cầu |
 | `4001` | `ADDRESS_NOT_FOUND` | 404 | Không tìm thấy địa chỉ giao hàng |
+| `4002` | `ADDRESS_LIMIT_EXCEEDED` | 400 | Số lượng địa chỉ nhận hàng đã đạt giới hạn tối đa (tối đa 10 địa chỉ) |
+| `4005` | `METHOD_NOT_ALLOWED` | 405 | Phương thức HTTP không được hỗ trợ cho đường dẫn này |
 | `5001` | `ORDER_NOT_FOUND` | 404 | Không tìm thấy đơn hàng yêu cầu |
 | `5002` | `ORDER_CANNOT_BE_CANCELLED` | 400 | Đơn hàng đã được xử lý/vận chuyển, không thể hủy |
 | `5003` | `INVALID_ORDER_STATUS_TRANSITION` | 400 | Chuyển trạng thái đơn hàng không hợp lệ |
@@ -474,6 +526,26 @@ Các kỹ sư Frontend (Next.js) và Mobile (Android) cần lưu ý điều ch�
 | **4** | `POST /auth/logout` | Không có body | Có thể gửi body tùy chọn `{"refreshToken": "..."}` | Nếu gửi `refreshToken`, backend chỉ hủy đúng thiết bị hiện tại; nếu không gửi thì hủy toàn bộ thiết bị. |
 | **5** | `POST /auth/resend-verification-otp` | *Chưa có* | **Endpoint công khai mới**: Nhận `{"email": "..."}` | Không cần đăng nhập vẫn gửi lại được OTP kích hoạt. Luôn trả HTTP 200 message thành công đồng nhất. |
 | **6** | Chính sách mật khẩu | `min=6`, không trần, không check yếu | Bắt buộc **8 - 64 ký tự**, tối đa **72 byte UTF-8**, không trùng email, không nằm trong top mật khẩu phổ biến | Cần validate trên form FE trước khi submit để tránh người dùng bị backend từ chối. |
-| **7** | `POST /auth/verify-otp` | Nhận `{email, otp}` | **Bắt buộc nhận `{email, otp, password}`** | Bổ sung mật khẩu để triệt tiêu lỗ hổng Pre-Verification Account Takeover (N1). |
-| **8** | `POST /auth/verify-account` & `POST /auth/send-verification-otp` | Tồn tại | **ĐÃ XÓA BỎ HOÀN TOÀN** | Các endpoint thừa không dùng được cho tài khoản chưa kích hoạt (N6). |
+| **7** | `POST /auth/verify-otp` | Nhận `{email, otp}` | **Bắt buộc nhận `{email, otp, password}`** | Bổ sung mật khẩu để khắc phục lỗ hổng Pre-Verification Account Takeover (N1). |
+| **8** | `POST /auth/verify-account` & `POST /auth/send-verification-otp` | Tồn tại | **ĐÃ ĐƯỢC XÓA BỎ** | Các endpoint thừa không dùng được cho tài khoản chưa kích hoạt (N6). |
 | **9** | `POST /auth/register` (đăng ký lại) | Ghi đè mật khẩu & thông tin cũ | **Không ghi đè mật khẩu/họ tên/SĐT**, chỉ cấp lại OTP mới | Bảo vệ mật khẩu đã thiết lập của chủ email thực sự (N1). |
+
+### 2.5. Xử lý Tài khoản Chưa Kích Hoạt & Cơ Chế Khôi Phục (Unactivated Account Recovery)
+
+Trong trường hợp một địa chỉ email bị đăng ký trước bởi người khác hoặc người dùng quên mật khẩu khi tài khoản chưa kịp kích hoạt:
+
+1. **Nguyên lý bảo vệ chống chiếm đoạt tài khoản (Anti-Takeover)**:
+   - Khi gọi `POST /api/v1/auth/register` với email đã tồn tại nhưng chưa kích hoạt (`isActive == false && emailVerified == false`), hệ thống **tuyệt đối không ghi đè** thông tin mật khẩu, họ tên, số điện thoại cũ.
+   - Khi gọi `POST /api/v1/auth/verify-otp`, hệ thống **bắt buộc xác thực đồng thời cả mã OTP và mật khẩu đã lưu**. Do đó, kẻ tấn công không thể kích hoạt tài khoản nếu không có cả mã OTP (gửi về email thật) và mật khẩu ban đầu.
+
+2. **Quy trình thoát & khôi phục quyền kiểm soát của chủ email thực sự**:
+   Chủ sở hữu thực sự của hộp thư email có thể lấy lại quyền kiểm soát và kích hoạt tài khoản theo quy trình 4 bước chuẩn:
+   - **Bước 1 (Gửi OTP quên mật khẩu)**: Gọi `POST /api/v1/auth/forgot-password` với `{"email": "customer@gmail.com"}`. Hệ thống gửi mã OTP đặt lại mật khẩu về hộp thư email thực tế (hiệu lực 5 phút).
+   - **Bước 2 (Xác thực OTP lấy Reset Token)**: Gọi `POST /api/v1/auth/verify-reset-otp` với `{"identity": "customer@gmail.com", "otp": "123456"}` để nhận `resetToken` dùng một lần (hiệu lực 10 phút).
+   - **Bước 3 (Thiết lập mật khẩu mới)**: Gọi `POST /api/v1/auth/reset-password` với `{"resetToken": "...", "newPassword": "PasswordMoi123@"}`. Mật khẩu tài khoản trong cơ sở dữ liệu sẽ được cập nhật thành mật khẩu mới do chủ email kiểm soát.
+   - **Bước 4 (Kích hoạt tài khoản)**: Gọi `POST /api/v1/auth/resend-verification-otp` để nhận mã OTP kích hoạt mới nhất, sau đó gọi `POST /api/v1/auth/verify-otp` với `email`, `otp`, và `password` mới. Tài khoản được chuyển sang trạng thái kích hoạt (`isActive = true`, `emailVerified = true`) và sẵn sàng đăng nhập.
+
+3. **Cơ chế giới hạn & Chống Brute-Force (Throttle & Lockout)**:
+   - Cooldown 60 giây giữa các lần yêu cầu mã OTP.
+   - Tối đa 5 yêu cầu gửi OTP trong vòng 1 giờ cho mỗi email (`OTP_THROTTLED` - HTTP 429).
+   - Nếu nhập sai OTP quá 10 lần trong 1 giờ cho cùng một email, hệ thống sẽ tạm khóa luồng OTP của email đó trong vòng **1 giờ** (`OTP_MAX_ATTEMPTS_EXCEEDED` - mã `1011`, HTTP 429).

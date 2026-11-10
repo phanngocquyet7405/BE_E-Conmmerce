@@ -176,8 +176,8 @@ public class GlobalExceptionHandler {
         String msg = "Phương thức HTTP '" + ex.getMethod() + "' không được hỗ trợ cho đường dẫn này";
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(ErrorResponse.builder()
-                        .code(4005)
-                        .error("METHOD_NOT_ALLOWED")
+                        .code(ErrorCode.METHOD_NOT_ALLOWED.getCode())
+                        .error(ErrorCode.METHOD_NOT_ALLOWED.name())
                         .message(msg)
                         .path(request.getRequestURI())
                         .build());

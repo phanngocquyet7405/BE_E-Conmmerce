@@ -137,6 +137,41 @@ class OrderServiceTest {
     }
 
     @Test
+    @DisplayName("Checkout tạo bản sao sâu (deep snapshot) của địa chỉ giao hàng, không dùng chung tham chiếu")
+    void checkout_DeepCopiesShippingAddress() {
+        CartItem item = CartItem.builder()
+                .productId("prod-1")
+                .productName("Áo thun nam")
+                .unitPrice(BigDecimal.valueOf(150000))
+                .quantity(1)
+                .build();
+        testCart.getItems().add(item);
+
+        Product dbProduct = Product.builder()
+                .id("prod-1")
+                .name("Áo thun nam")
+                .sku("SKU-AO-01")
+                .price(BigDecimal.valueOf(150000))
+                .stockQuantity(10)
+                .active(true)
+                .build();
+
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(testUser));
+        when(cartRepository.findByUserId("user-1")).thenReturn(Optional.of(testCart));
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class), any(), eq(Product.class)))
+                .thenReturn(dbProduct);
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        OrderResponse response = orderService.checkout("user-1", checkoutRequest);
+
+        assertNotNull(response.getShippingAddress());
+        assertNotSame(testAddress, response.getShippingAddress(), "Bắt buộc phải là bản sao sâu, không dùng chung tham chiếu đối tượng");
+        assertEquals(testAddress.getId(), response.getShippingAddress().getId());
+        assertEquals(testAddress.getRecipientName(), response.getShippingAddress().getRecipientName());
+        assertEquals(testAddress.getStreetAddress(), response.getShippingAddress().getStreetAddress());
+    }
+
+    @Test
     @DisplayName("Checkout thất bại khi sản phẩm hết hàng: Ném INSUFFICIENT_STOCK và thực hiện bù tồn kho (compensating rollback)")
     void checkout_InsufficientStock_RollsBackAndThrowsException() {
         CartItem item1 = CartItem.builder()

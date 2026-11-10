@@ -103,10 +103,33 @@ public class OrderServiceImpl implements OrderService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.UNAUTHENTICATED));
 
-        Address shippingAddress = user.getAddresses().stream()
+        if (user.getAddresses() == null || user.getAddresses().isEmpty()) {
+            throw new AppException(ErrorCode.ADDRESS_NOT_FOUND);
+        }
+
+        Address selectedAddress = user.getAddresses().stream()
                 .filter(a -> a.getId().equals(request.getAddressId()))
                 .findFirst()
                 .orElseThrow(() -> new AppException(ErrorCode.ADDRESS_NOT_FOUND));
+
+        // T4: Bản sao sâu (deep snapshot) của địa chỉ giao hàng tại thời điểm đặt hàng
+        Address shippingAddress = Address.builder()
+                .id(selectedAddress.getId())
+                .recipientName(selectedAddress.getRecipientName())
+                .phone(selectedAddress.getPhone())
+                .province(selectedAddress.getProvince())
+                .district(selectedAddress.getDistrict())
+                .ward(selectedAddress.getWard())
+                .streetAddress(selectedAddress.getStreetAddress())
+                .label(selectedAddress.getLabel())
+                .note(selectedAddress.getNote())
+                .latitude(selectedAddress.getLatitude())
+                .longitude(selectedAddress.getLongitude())
+                .provinceCode(selectedAddress.getProvinceCode())
+                .districtCode(selectedAddress.getDistrictCode())
+                .wardCode(selectedAddress.getWardCode())
+                .isDefault(selectedAddress.isDefault())
+                .build();
 
         Cart cart = cartRepository.findByUserId(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.CART_EMPTY));

@@ -87,7 +87,7 @@ class ProfileServiceTest {
                 .when(redisTokenService).revokeAllSessions("user-123");
 
         AppException ex = assertThrows(AppException.class, () -> profileService.changePassword("user-123", request));
-        assertEquals(ErrorCode.INTERNAL_SERVER_ERROR, ex.getErrorCode());
+        assertEquals(ErrorCode.AUTH_SERVICE_UNAVAILABLE, ex.getErrorCode());
         assertTrue(ex.getMessage().contains("chưa đăng xuất được các thiết bị khác"));
 
         // Xác nhận mật khẩu đã được lưu trước khi ném lỗi
