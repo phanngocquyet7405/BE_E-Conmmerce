@@ -1,8 +1,7 @@
 package com.ecommerce.dto.request;
 
 import jakarta.validation.constraints.*;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -10,6 +9,9 @@ import java.util.List;
 
 @Getter
 @Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class ProductRequest {
 
     @NotBlank(message = "Mã SKU không được để trống")
@@ -18,7 +20,6 @@ public class ProductRequest {
     @NotBlank(message = "Tên sản phẩm không được để trống")
     private String name;
 
-    @NotBlank(message = "Slug đường dẫn không được để trống")
     private String slug;
 
     private String description;
@@ -33,6 +34,7 @@ public class ProductRequest {
 
     private String thumbnailUrl;
 
+    @Builder.Default
     private List<String> images = new ArrayList<>();
 
     @NotBlank(message = "Mã danh mục không được để trống")

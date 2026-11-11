@@ -15,6 +15,7 @@ import com.ecommerce.repository.BrandRepository;
 import com.ecommerce.repository.CategoryRepository;
 import com.ecommerce.repository.ProductRepository;
 import com.ecommerce.service.ProductService;
+import com.ecommerce.util.SlugUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -100,6 +101,22 @@ public class ProductServiceImpl implements ProductService {
         Product product = productMapper.toDocument(request);
         product.setCategoryName(category.getName());
 
+        // Xử lý slug tự động nếu client không truyền
+        String slug = StringUtils.hasText(request.getSlug())
+                ? SlugUtil.toSlug(request.getSlug())
+                : SlugUtil.toSlug(request.getName());
+
+        if (!StringUtils.hasText(slug)) {
+            slug = "product-" + System.currentTimeMillis();
+        }
+
+        String baseSlug = slug;
+        int counter = 1;
+        while (productRepository.existsBySlug(slug)) {
+            slug = baseSlug + "-" + counter++;
+        }
+        product.setSlug(slug);
+
         // Liên kết Thương hiệu (nếu có truyền brandId)
         if (StringUtils.hasText(request.getBrandId())) {
             Brand brand = brandRepository.findById(request.getBrandId())
@@ -128,6 +145,24 @@ public class ProductServiceImpl implements ProductService {
 
         productMapper.updateDocumentFromRequest(request, product);
         product.setCategoryName(category.getName());
+
+        if (StringUtils.hasText(request.getSlug())) {
+            String newSlug = SlugUtil.toSlug(request.getSlug());
+            String baseSlug = newSlug;
+            int counter = 1;
+            while (productRepository.existsBySlugAndIdNot(newSlug, id)) {
+                newSlug = baseSlug + "-" + counter++;
+            }
+            product.setSlug(newSlug);
+        } else if (!StringUtils.hasText(product.getSlug())) {
+            String newSlug = SlugUtil.toSlug(request.getName());
+            String baseSlug = newSlug;
+            int counter = 1;
+            while (productRepository.existsBySlugAndIdNot(newSlug, id)) {
+                newSlug = baseSlug + "-" + counter++;
+            }
+            product.setSlug(newSlug);
+        }
 
         // Cập nhật Thương hiệu
         if (StringUtils.hasText(request.getBrandId())) {

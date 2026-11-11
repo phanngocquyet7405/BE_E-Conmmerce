@@ -12,5 +12,7 @@ import java.util.Optional;
 public interface ProductRepository extends MongoRepository<Product, String> {
     boolean existsBySkuIgnoreCase(String sku);
     Optional<Product> findBySlug(String slug);
+    boolean existsBySlug(String slug);
+    boolean existsBySlugAndIdNot(String slug, String id);
     Page<Product> findAllByActiveTrue(Pageable pageable);
 }
