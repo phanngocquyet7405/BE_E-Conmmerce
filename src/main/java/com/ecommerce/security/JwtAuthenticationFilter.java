@@ -1,5 +1,6 @@
 package com.ecommerce.security;
 
+import com.ecommerce.common.constant.ApiRoutes;
 import com.ecommerce.exception.AppException;
 import com.ecommerce.exception.ErrorCode;
 import com.ecommerce.service.RedisTokenService;
@@ -20,6 +21,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -34,9 +36,53 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String BEARER_PREFIX = "Bearer ";
     public static final String ATTR_AUTH_ERROR_CODE = "AUTH_ERROR_CODE";
+    private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
+
+    private static final List<String> EXCLUDED_PATHS = List.of(
+            // 1. Toàn bộ các endpoint xác thực không yêu cầu Access Token (tránh token hết hạn chặn đăng nhập/đăng ký/OTP)
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.LOGIN,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.REGISTER,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.REFRESH,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_OTP,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESEND_VERIFICATION_OTP,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.FORGOT_PASSWORD,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.VERIFY_RESET_OTP,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.RESET_PASSWORD,
+            ApiRoutes.Auth.BASE + ApiRoutes.Auth.LOGOUT,
+
+            // 2. Các tài nguyên công khai & tài liệu API
+            "/health",
+            ApiRoutes.Products.PUBLIC_BASE + "/**",
+            ApiRoutes.Categories.PUBLIC_BASE + "/**",
+            ApiRoutes.Brands.PUBLIC_BASE + "/**",
+            ApiRoutes.Payment.BASE + "/methods",
+            "/api/v1/payments/methods",
+            "/api/payments/sepay-webhook",
+            "/uploads/**",
+            "/v3/api-docs/**",
+            "/swagger-ui/**",
+            "/swagger-ui.html"
+    );
 
     private final JwtUtil jwtUtil;
     private final RedisTokenService redisTokenService;
+
+    @Override
+    protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
+
+        String path = request.getServletPath();
+        if (!StringUtils.hasText(path)) {
+            path = request.getRequestURI();
+        }
+
+        final String lookupPath = path;
+        return EXCLUDED_PATHS.stream()
+                .anyMatch(pattern -> PATH_MATCHER.match(pattern, lookupPath)
+                        || PATH_MATCHER.match(pattern + "/", lookupPath));
+    }
 
     @Override
     protected void doFilterInternal(
