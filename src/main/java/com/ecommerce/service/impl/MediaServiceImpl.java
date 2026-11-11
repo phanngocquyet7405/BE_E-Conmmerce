@@ -64,10 +64,10 @@ public class MediaServiceImpl implements MediaService {
         String originalFilename = StringUtils.cleanPath(
                 file.getOriginalFilename() != null ? file.getOriginalFilename() : ("image" + safeExtension));
 
-        // 1. Ưu tiên stream trực tiếp lên Cloudinary (tránh load nguyên byte[] vào JVM heap 512MB)
+        // 1. Tải ảnh lên Cloudinary bằng byte[] (Cloudinary SDK không nhận InputStream)
         if (cloudinary != null) {
-            try (InputStream is = file.getInputStream()) {
-                Map<?, ?> uploadResult = cloudinary.uploader().upload(is, ObjectUtils.asMap(
+            try {
+                Map<?, ?> uploadResult = cloudinary.uploader().upload(file.getBytes(), ObjectUtils.asMap(
                         "folder", "ecommerce_products",
                         "resource_type", "image"
                 ));
@@ -86,7 +86,7 @@ public class MediaServiceImpl implements MediaService {
                         .build();
 
             } catch (Exception e) {
-                log.error("Lỗi khi stream ảnh lên Cloudinary: ", e);
+                log.error("Lỗi khi tải ảnh lên Cloudinary: ", e);
                 if (isProdProfile()) {
                     throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                             "Dịch vụ lưu trữ media đám mây (Cloudinary) gặp sự cố trên môi trường Production: " + e.getMessage());
