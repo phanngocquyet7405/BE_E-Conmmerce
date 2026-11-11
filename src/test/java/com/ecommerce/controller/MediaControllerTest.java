@@ -61,7 +61,9 @@ class MediaControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code").value(1000))
                 .andExpect(jsonPath("$.data.fileUrl").value("https://res.cloudinary.com/demo/image/upload/sample.jpg"))
-                .andExpect(jsonPath("$.data.fileName").value("sample.jpg"));
+                .andExpect(jsonPath("$.data.url").value("https://res.cloudinary.com/demo/image/upload/sample.jpg"))
+                .andExpect(jsonPath("$.data.fileName").value("sample.jpg"))
+                .andExpect(jsonPath("$.data.publicId").value("sample.jpg"));
     }
 
     @Test

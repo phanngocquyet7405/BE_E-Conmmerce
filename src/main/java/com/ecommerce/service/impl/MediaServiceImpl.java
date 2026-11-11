@@ -89,13 +89,13 @@ public class MediaServiceImpl implements MediaService {
                 log.error("Lỗi khi stream ảnh lên Cloudinary: ", e);
                 if (isProdProfile()) {
                     throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                            "Dịch vụ lưu trữ media đám mây (Cloudinary) gặp sự cố trên môi trường Production.");
+                            "Dịch vụ lưu trữ media đám mây (Cloudinary) gặp sự cố trên môi trường Production: " + e.getMessage());
                 }
             }
         } else if (isProdProfile()) {
             // Trên Production: bắt buộc phải có Cloudinary, không được lưu cục bộ
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Dịch vụ lưu trữ media đám mây (Cloudinary) chưa được cấu hình trên môi trường Production.");
+                    "Dịch vụ lưu trữ media đám mây (Cloudinary) chưa được cấu hình trên môi trường Production. Vui lòng kiểm tra biến môi trường CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET trên Render.");
         }
 
         // 2. Fallback lưu cục bộ cho môi trường dev/test:
