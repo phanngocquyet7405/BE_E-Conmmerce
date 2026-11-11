@@ -10,6 +10,9 @@ import org.springframework.util.StringUtils;
 @Configuration
 public class CloudinaryConfig {
 
+    @Value("${cloudinary.url:}")
+    private String cloudinaryUrl;
+
     @Value("${cloudinary.cloud-name:}")
     private String cloudName;
 
@@ -21,11 +24,14 @@ public class CloudinaryConfig {
 
     @Bean
     public Cloudinary cloudinary() {
+        if (StringUtils.hasText(cloudinaryUrl)) {
+            return new Cloudinary(cloudinaryUrl.trim());
+        }
         if (StringUtils.hasText(cloudName) && StringUtils.hasText(apiKey) && StringUtils.hasText(apiSecret)) {
             return new Cloudinary(ObjectUtils.asMap(
-                    "cloud_name", cloudName,
-                    "api_key", apiKey,
-                    "api_secret", apiSecret,
+                    "cloud_name", cloudName.trim(),
+                    "api_key", apiKey.trim(),
+                    "api_secret", apiSecret.trim(),
                     "secure", true
             ));
         }
